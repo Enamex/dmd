@@ -12,7 +12,8 @@ import core.stdc.ctype;
 import core.stdc.string;
 import core.math;
 
-version (Windows) __gshared extern (C) extern const(char)* __locale_decpoint;
+version(CRuntime_DigitalMars) __gshared extern (C) extern const(char)* __locale_decpoint;
+version(CRuntime_Microsoft)   extern(C++) struct longdouble {}
 
 extern (C) float strtof(const(char)* p, char** endp);
 extern (C) double strtod(const(char)* p, char** endp);
@@ -25,8 +26,16 @@ extern (C++) struct Port
     enum ldbl_max = real.max;
     enum ldbl_nan = real.nan;
     enum ldbl_infinity = real.infinity;
-    static __gshared bool yl2x_supported = true;
-    static __gshared bool yl2xp1_supported = true;
+    version(DigitalMars)
+    {
+        static __gshared bool yl2x_supported = true;
+        static __gshared bool yl2xp1_supported = true;
+    }
+    else
+    {
+        static __gshared bool yl2x_supported = false;
+        static __gshared bool yl2xp1_supported = false;
+    }
     static __gshared real snan;
     static this()
     {
@@ -106,6 +115,14 @@ extern (C++) struct Port
         return isNan(r) && !(((cast(ubyte*)&r)[7]) & 0x40);
     }
 
+    version(CRuntime_Microsoft)
+    {
+        static int isSignallingNan(longdouble ld)
+        {
+            return isSignallingNan(*cast(real*)&ld);
+        }
+    }
+
     static int isInfinity(double r)
     {
         return r is double.infinity || r is -double.infinity;
@@ -113,48 +130,50 @@ extern (C++) struct Port
 
     static float strtof(const(char)* p, char** endp)
     {
-        version (Windows)
+        version (CRuntime_DigitalMars)
         {
             auto save = __locale_decpoint;
             __locale_decpoint = ".";
         }
         auto r = .strtof(p, endp);
-        version (Windows) __locale_decpoint = save;
+        version (CRuntime_DigitalMars) __locale_decpoint = save;
         return r;
     }
 
     static double strtod(const(char)* p, char** endp)
     {
-        version (Windows)
+        version (CRuntime_DigitalMars)
         {
             auto save = __locale_decpoint;
             __locale_decpoint = ".";
         }
         auto r = .strtod(p, endp);
-        version (Windows) __locale_decpoint = save;
+        version (CRuntime_DigitalMars) __locale_decpoint = save;
         return r;
     }
 
     static real strtold(const(char)* p, char** endp)
     {
-        version (Windows)
+        version (CRuntime_DigitalMars)
         {
             auto save = __locale_decpoint;
             __locale_decpoint = ".";
         }
         auto r = .strtold(p, endp);
-        version (Windows) __locale_decpoint = save;
+        version (CRuntime_DigitalMars) __locale_decpoint = save;
         return r;
     }
 
     static void yl2x_impl(real* x, real* y, real* res)
     {
-        *res = yl2x(*x, *y);
+        version(DigitalMars)
+            *res = yl2x(*x, *y);
     }
 
     static void yl2xp1_impl(real* x, real* y, real* res)
     {
-        *res = yl2xp1(*x, *y);
+        version(DigitalMars)
+            *res = yl2xp1(*x, *y);
     }
 
     // Little endian

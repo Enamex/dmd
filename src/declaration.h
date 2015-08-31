@@ -88,6 +88,7 @@ enum PINLINE;
 #define STCnogc          0x40000000000LL // @nogc
 #define STCvolatile      0x80000000000LL // destined for volatile in the back end
 #define STCreturn        0x100000000000LL // 'return ref' for function parameters
+#define STCautoref       0x200000000000LL // Mark for the already deduced 'auto ref' parameter
 
 const StorageClass STCStorageClass = (STCauto | STCscope | STCstatic | STCextern | STCconst | STCfinal |
     STCabstract | STCsynchronized | STCdeprecated | STCoverride | STClazy | STCalias |
@@ -222,7 +223,7 @@ public:
     Dsymbol *aliassym;
     bool hasOverloads;
 
-    OverDeclaration(Dsymbol *s, bool hasOverloads = true);
+    OverDeclaration(Identifier *ident, Dsymbol *s, bool hasOverloads = true);
     const char *kind();
     void semantic(Scope *sc);
     bool equals(RootObject *o);
@@ -677,7 +678,7 @@ public:
     FuncDeclaration *funcalias;
     bool hasOverloads;
 
-    FuncAliasDeclaration(FuncDeclaration *funcalias, bool hasOverloads = true);
+    FuncAliasDeclaration(Identifier *ident, FuncDeclaration *funcalias, bool hasOverloads = true);
 
     FuncAliasDeclaration *isFuncAliasDeclaration() { return this; }
     const char *kind();

@@ -592,14 +592,13 @@ enum BC {
     BCcatch     = 11,   // C++ catch block
     BCjump      = 12,   // Belem specifies (near) address to jump to
     BC_try      = 13,   // SEH: first block of try-except or try-finally
-                        // Jupiter, Mars: try-catch or try-finally
+                        // Mars: try-catch or try-finally
     BC_filter   = 14,   // SEH exception-filter (always exactly one block)
     BC_finally  = 15,   // first block of SEH termination-handler,
                         // or finally block
     BC_ret      = 16,   // last block of SEH termination-handler or finally block
     BC_except   = 17,   // first block of SEH exception-handler
-    BCjcatch    = 18,   // first block of Jupiter or Mars catch-block
-    BCjplace    = 19,   // Jupiter: placeholder
+    BCjcatch    = 18,   // first block of Mars catch-block
     BCMAX
 };
 
@@ -662,10 +661,8 @@ typedef struct FUNC_S
         #define Fnteh           0x08    // uses NT Structured EH
         #define Fdoinline       0x40    // do inline walk
         #define Foverridden     0x80    // ignore for overriding purposes
-#if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
-        #define Fnowrite        0x100   // SCinline should never output definition
-#else
-        #define Fjmonitor       0x100   // Jupiter synchronized function
+#if MARS && TARGET_WINDOS
+        #define Fjmonitor       0x100   // Mars synchronized function
 #endif
         #define Fnosideeff      0x200   // function has no side effects
         #define F3badoparrow    0x400   // bad operator->()
@@ -744,18 +741,9 @@ typedef struct BASECLASS
     Classsym         *BCbase;           // base class Symbol
     struct BASECLASS *BCnext;           // next base class
     targ_size_t       BCoffset;         // offset from start of derived class to this
-#if VBTABLES
     unsigned short    BCvbtbloff;       // for BCFvirtual, offset from start of
                                         //     vbtbl[] to entry for this virtual base.
                                         //     Valid in Sbase list
-#else
-    targ_size_t memoffset;      /* for BCFvirtual, offset from this to
-                                   pointer to virtual base class.
-                                   Valid in Sbase list
-                                 */
-    Symbol *param;              /* parameter for this Symbol (in        */
-                                /* Svirtbase list only)                 */
-#endif
     symlist_t         BCpublics;        // public members of base class (list is freeable)
     list_t            BCmptrlist;       // (in Smptrbase only) this is the vtbl
                                         // (NULL if not different from base class's vtbl
@@ -994,17 +982,14 @@ typedef struct STRUCT
     Funcsym *Sctor;             // constructor function
 
     Funcsym *Sdtor;             // basic destructor
-#if VBTABLES
     Funcsym *Sprimdtor;         // primary destructor
     Funcsym *Spriminv;          // primary invariant
     Funcsym *Sscaldeldtor;      // scalar deleting destructor
-#endif
 
     Funcsym *Sinvariant;        // basic invariant function
 
     Symbol *Svptr;              // Symbol of vptr
     Symbol *Svtbl;              // Symbol of vtbl[]
-#if VBTABLES
     Symbol *Svbptr;             // Symbol of pointer to vbtbl[]
     Symbol *Svbptr_parent;      // base class for which Svbptr is a member.
                                 // NULL if Svbptr is a member of this class
@@ -1012,7 +997,6 @@ typedef struct STRUCT
     Symbol *Svbtbl;             // virtual base offset table
     baseclass_t *Svbptrbase;    // list of all base classes in canonical
                                 // order that have their own vbtbl[]
-#endif
     Funcsym *Sopeq;             // X& X::operator =(X&)
     Funcsym *Sopeq2;            // Sopeq, but no copy of virtual bases
     Funcsym *Scpct;             // copy constructor
@@ -1188,12 +1172,6 @@ struct Symbol
     const char *prettyIdent;    // the symbol identifer as the user sees it
 #endif
 
-#if ELFOBJ || MACHOBJ
-    long          obj_si;       // Symbol index of coff or elf symbol
-    unsigned long dwarf_off;    // offset into .debug section
-    targ_size_t   code_off;     // rel. offset from start of block where var is initialized
-    targ_size_t   last_off;     // last offset using var
-#endif
 #if TARGET_OSX
     targ_size_t Slocalgotoffset;
 #endif
@@ -1294,8 +1272,7 @@ struct Symbol
     }_SXR;
     regm_t      Sregsaved;      // mask of registers not affected by this func
 
-    char Sident[SYM_PREDEF_SZ]; // identifier string (dynamic array)
-                                // (the size is for static Symbols)
+    char Sident[1];             // identifier string (dynamic array)
 
     int needThis();             // !=0 if symbol needs a 'this' pointer
     bool Sisdead(bool anyiasm); // if variable is not referenced

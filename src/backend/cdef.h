@@ -491,7 +491,6 @@ typedef targ_uns        targ_size_t;    /* size_t for the target machine */
 #define THUNKS          1       /* use thunks for virtual functions     */
 #define SEPNEWDEL       1       // new/delete are not called within the ctor/dtor,
                                 // they are separate
-#define VBTABLES        1       // use Microsoft object model
 #define UNICODE         1       // support Unicode (wchar_t is unsigned short)
 #define DLCMSGS         0       // if 1, have all messages in a file
 #define NEWMANGLE       TARGET_WINDOS   // use MS name mangling scheme
@@ -551,9 +550,6 @@ typedef targ_uns        targ_size_t;    /* size_t for the target machine */
 #define CDATAREL 5      /* constant data with relocs    */
 #define UNKNOWN -1      /* unknown segment              */
 #define DGROUPIDX 1     /* group index of DGROUP        */
-
-#define KEEPBITFIELDS 0 /* 0 means code generator cannot handle bit fields, */
-                        /* so replace them with shifts and masks        */
 
 #define REGMAX  29      // registers are numbered 0..10
 
@@ -979,35 +975,8 @@ union eve
 #define IDSYMBOL
 #endif
 
-#if SCPP
-#define SYMBOLZERO      0,0,0,
-#elif MARS
-#define SYMBOLZERO      0,0,
-#else
-#define SYMBOLZERO
-#endif
-
-#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
-#define UNIXFIELDS      (unsigned)-1,(unsigned)-1,0,0,
-#elif TARGET_OSX
-#define UNIXFIELDS      (unsigned)-1,(unsigned)-1,0,0,0,
-#else
-#define UNIXFIELDS
-#endif
-
 typedef unsigned SYMFLGS;
-#if MARS
-#define SYM_PREDEF_SZ 40
-#else
-#define SYM_PREDEF_SZ 22
-#endif
 
-#define SYMBOLY(fl,regsaved,name,flags) \
-        {IDSYMBOL \
-         (symbol *)0,(symbol *)0,(symbol *)0,(dt_t *)0,0,(type *)0,{0},\
-         SYMBOLZERO\
-         UNIXFIELDS\
-         SCextern,(fl),(flags),0,0,0,0,0,0,0,{0},(regsaved),{name}}
 
 /**********************************
  * Storage classes

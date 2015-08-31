@@ -4486,6 +4486,7 @@ code *cdneg(elem *e,regm_t *pretregs)
         c = gen2(CNIL,0xF7,modregrm(3,3,msreg)); /* NEG msreg           */
         lsreg = findreglsw(retregs);
         gen2(c,0xF7,modregrm(3,3,lsreg));       /* NEG lsreg            */
+        code_orflag(c, CFpsw);                  // need flag result of previous NEG
         genc2(c,0x81,modregrm(3,3,msreg),0);    /* SBB msreg,0          */
   }
   else
@@ -5243,29 +5244,6 @@ code *cdhalt(elem *e,regm_t *pretregs)
 {
     assert(*pretregs == 0);
     return gen1(NULL, 0xF4);            // HLT
-}
-
-/****************************************
- * Check to see if pointer is NULL.
- */
-
-code *cdnullcheck(elem *e,regm_t *pretregs)
-{   regm_t retregs;
-    regm_t scratch;
-    unsigned reg;
-    code *c;
-    code *cs;
-
-    assert(!I16);
-    retregs = *pretregs;
-    if ((retregs & allregs) == 0)
-        retregs |= allregs;
-    c = codelem(e->E1,&retregs,FALSE);
-    scratch = allregs & ~retregs;
-    cs = allocreg(&scratch,&reg,TYint);
-    unsigned rex = I64 ? REX_W : 0;
-    cs = genc1(cs,0x8B,(rex << 16) | buildModregrm(2,reg,findreg(retregs)),FLconst,0); // MOV reg,0[e]
-    return cat3(c,cs,fixresult(e,retregs,pretregs));
 }
 
 #endif // !SPP

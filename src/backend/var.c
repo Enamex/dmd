@@ -49,7 +49,7 @@ linkage_t linkage;
 int linkage_spec = 0;           /* using the default                    */
 
 /* Function types       */
-/* LINK_MAXDIM = C,C++,Pascal,FORTRAN,syscall,stdcall,Jupiter */
+/* LINK_MAXDIM = C,C++,Pascal,FORTRAN,syscall,stdcall,Mars */
 #if MEMMODELS == 1
 tym_t functypetab[LINK_MAXDIM] =
 {
@@ -64,11 +64,7 @@ tym_t functypetab[LINK_MAXDIM] =
 tym_t functypetab[LINK_MAXDIM][MEMMODELS] =
 {
     TYnfunc,  TYffunc,  TYnfunc,  TYffunc,  TYffunc,
-#if VBTABLES
     TYnfunc,  TYffunc,  TYnfunc,  TYffunc,  TYffunc,
-#else
-    TYnpfunc, TYfpfunc, TYnpfunc, TYfpfunc, TYfpfunc,
-#endif
     TYnpfunc, TYfpfunc, TYnpfunc, TYfpfunc, TYfpfunc,
     TYnpfunc, TYfpfunc, TYnpfunc, TYfpfunc, TYfpfunc,
     TYnfunc,  TYffunc,  TYnfunc,  TYffunc,  TYffunc,
