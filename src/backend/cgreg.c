@@ -294,6 +294,7 @@ Lagain:
             case BCcatch:
             case BC_except:
             case BC_finally:
+            case BC_lpad:
             case BC_ret:
                 s->Sflags &= ~GTregcand;
                 goto Lcant;             // can't assign to register
@@ -575,7 +576,7 @@ void cgreg_spillreg_epilog(block *b,Symbol *s,code **pcstore,code **pcload)
 
     //printf("cgreg_spillreg_epilog(block %d, s = '%s')\n",bi,s->Sident);
     //assert(b->BC == BCgoto);
-    if (!cgreg_gotoepilog(list_block(b->Bsucc),s))
+    if (!cgreg_gotoepilog(b->nthSucc(0), s))
         return;
 
     int inoutp;
@@ -666,18 +667,14 @@ void cgreg_map(Symbol *s, unsigned regmsw, unsigned reglsw)
                 case SCparameter:
                     s->Sfl = FLpara;
                     break;
-#if PSEUDO_REGS
                 case SCpseudo:
                     s->Sfl = FLpseudo;
                     break;
-#endif
                 case SCstack:
                     s->Sfl = FLstack;
                     break;
                 default:
-#ifdef DEBUG
                     symbol_print(s);
-#endif
                     assert(0);
             }
         }
@@ -795,11 +792,9 @@ int cgreg_assign(Symbol *retsym)
                     case SCparameter:
                         s->Sfl = FLpara;
                         break;
-#if PSEUDO_REGS
                     case SCpseudo:
                         s->Sfl = FLpseudo;
                         break;
-#endif
                     case SCstack:
                         s->Sfl = FLstack;
                         break;

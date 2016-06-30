@@ -1,14 +1,16 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the D programming language
+ * http://dlang.org
+ *
+ * Copyright: Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:   Walter Bright, http://www.digitalmars.com
+ * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:    $(DMDSRC root/_stringtable.d)
+ */
 
 module ddmd.root.stringtable;
 
-import core.stdc.stdint, core.stdc.string;
+import core.stdc.string;
 import ddmd.root.rmem;
 
 enum POOL_BITS = 12;
@@ -18,24 +20,22 @@ enum POOL_SIZE = (1U << POOL_BITS);
 // MurmurHash2 was written by Austin Appleby, and is placed in the public
 // domain. The author hereby disclaims copyright to this source code.
 // https://sites.google.com/site/murmurhash/
-extern (C++) static uint32_t calcHash(const(char)* key, size_t len)
+private uint calcHash(const(char)* key, size_t len) pure nothrow @nogc
 {
     // 'm' and 'r' are mixing constants generated offline.
     // They're not really 'magic', they just happen to work well.
-    const(uint32_t) m = 0x5bd1e995;
-    const(int) r = 24;
+    enum uint m = 0x5bd1e995;
+    enum int r = 24;
     // Initialize the hash to a 'random' value
-    uint32_t h = cast(uint32_t)len;
+    uint h = cast(uint)len;
     // Mix 4 bytes at a time into the hash
-    const(uint8_t)* data = cast(const(uint8_t)*)key;
+    const(ubyte)* data = cast(const(ubyte)*)key;
     while (len >= 4)
     {
-        uint32_t k = data[3] << 24 | data[2] << 16 | data[1] << 8 | data[0];
+        uint k = data[3] << 24 | data[2] << 16 | data[1] << 8 | data[0];
         k *= m;
         k ^= k >> r;
-        k *= m;
-        h *= m;
-        h ^= k;
+        h = (h * m) ^ (k * m);
         data += 4;
         len -= 4;
     }
@@ -44,11 +44,14 @@ extern (C++) static uint32_t calcHash(const(char)* key, size_t len)
     {
     case 3:
         h ^= data[2] << 16;
+        goto case;
     case 2:
         h ^= data[1] << 8;
+        goto case;
     case 1:
         h ^= data[0];
         h *= m;
+        goto default;
     default:
         break;
     }
@@ -60,7 +63,7 @@ extern (C++) static uint32_t calcHash(const(char)* key, size_t len)
     return h;
 }
 
-extern (C++) static size_t nextpow2(size_t val)
+private size_t nextpow2(size_t val) pure nothrow @nogc @safe
 {
     size_t res = 1;
     while (res < val)
@@ -68,12 +71,12 @@ extern (C++) static size_t nextpow2(size_t val)
     return res;
 }
 
-extern (C++) __gshared const(double) loadFactor = 0.8;
+enum loadFactor = 0.8;
 
 struct StringEntry
 {
-    uint32_t hash;
-    uint32_t vptr;
+    uint hash;
+    uint vptr;
 }
 
 // StringValue is a variable-length structure. It has neither proper c'tors nor a
@@ -83,17 +86,19 @@ struct StringValue
     void* ptrvalue;
     size_t length;
 
+nothrow:
+pure:
     extern (C++) char* lstring()
     {
         return cast(char*)(&this + 1);
     }
 
-    extern (C++) const(size_t) len()
+    extern (C++) size_t len() const
     {
         return length;
     }
 
-    extern (C++) const(const(char)*) toDchars()
+    extern (C++) const(char)* toDchars() const
     {
         return cast(const(char)*)(&this + 1);
     }
@@ -104,13 +109,13 @@ struct StringTable
 private:
     StringEntry* table;
     size_t tabledim;
-    uint8_t** pools;
+    ubyte** pools;
     size_t npools;
     size_t nfill;
     size_t count;
 
 public:
-    extern (C++) void _init(size_t size = 0)
+    extern (C++) void _init(size_t size = 0) nothrow
     {
         size = nextpow2(cast(size_t)(size / loadFactor));
         if (size < 32)
@@ -122,7 +127,7 @@ public:
         count = 0;
     }
 
-    extern (C++) void reset(size_t size = 0)
+    extern (C++) void reset(size_t size = 0) nothrow
     {
         for (size_t i = 0; i < npools; ++i)
             mem.xfree(pools[i]);
@@ -133,7 +138,7 @@ public:
         _init(size);
     }
 
-    extern (C++) ~this()
+    extern (C++) ~this() nothrow
     {
         for (size_t i = 0; i < npools; ++i)
             mem.xfree(pools[i]);
@@ -143,7 +148,7 @@ public:
         pools = null;
     }
 
-    extern (C++) StringValue* lookup(const(char)* s, size_t length)
+    extern (C++) StringValue* lookup(const(char)* s, size_t length) nothrow pure
     {
         const(hash_t) hash = calcHash(s, length);
         const(size_t) i = findSlot(hash, s, length);
@@ -151,7 +156,7 @@ public:
         return getValue(table[i].vptr);
     }
 
-    extern (C++) StringValue* insert(const(char)* s, size_t length)
+    extern (C++) StringValue* insert(const(char)* s, size_t length, void* ptrvalue) nothrow
     {
         const(hash_t) hash = calcHash(s, length);
         size_t i = findSlot(hash, s, length);
@@ -163,12 +168,12 @@ public:
             i = findSlot(hash, s, length);
         }
         table[i].hash = hash;
-        table[i].vptr = allocValue(s, length);
+        table[i].vptr = allocValue(s, length, ptrvalue);
         // printf("insert %.*s %p\n", (int)length, s, table[i].value ?: NULL);
         return getValue(table[i].vptr);
     }
 
-    extern (C++) StringValue* update(const(char)* s, size_t length)
+    extern (C++) StringValue* update(const(char)* s, size_t length) nothrow
     {
         const(hash_t) hash = calcHash(s, length);
         size_t i = findSlot(hash, s, length);
@@ -180,7 +185,7 @@ public:
                 i = findSlot(hash, s, length);
             }
             table[i].hash = hash;
-            table[i].vptr = allocValue(s, length);
+            table[i].vptr = allocValue(s, length, null);
         }
         // printf("update %.*s %p\n", (int)length, s, table[i].value ?: NULL);
         return getValue(table[i].vptr);
@@ -194,14 +199,13 @@ public:
      * Returns:
      *      last return value of fp call
      */
-    extern (C++) int apply(int function(StringValue*) fp)
+    extern (C++) int apply(int function(const(StringValue)*) fp)
     {
-        for (size_t i = 0; i < tabledim; ++i)
+        foreach (const se; table[0 .. tabledim])
         {
-            StringEntry* se = &table[i];
             if (!se.vptr)
                 continue;
-            StringValue* sv = getValue(se.vptr);
+            const sv = getValue(se.vptr);
             int result = (*fp)(sv);
             if (result)
                 return result;
@@ -210,26 +214,27 @@ public:
     }
 
 private:
-    extern (C++) uint32_t allocValue(const(char)* s, size_t length)
+nothrow:
+    uint allocValue(const(char)* s, size_t length, void* ptrvalue)
     {
         const(size_t) nbytes = StringValue.sizeof + length + 1;
         if (!npools || nfill + nbytes > POOL_SIZE)
         {
-            pools = cast(uint8_t**)mem.xrealloc(pools, ++npools * (pools[0]).sizeof);
-            pools[npools - 1] = cast(uint8_t*)mem.xmalloc(nbytes > POOL_SIZE ? nbytes : POOL_SIZE);
+            pools = cast(ubyte**)mem.xrealloc(pools, ++npools * (pools[0]).sizeof);
+            pools[npools - 1] = cast(ubyte*)mem.xmalloc(nbytes > POOL_SIZE ? nbytes : POOL_SIZE);
             nfill = 0;
         }
         StringValue* sv = cast(StringValue*)&pools[npools - 1][nfill];
-        sv.ptrvalue = null;
+        sv.ptrvalue = ptrvalue;
         sv.length = length;
         .memcpy(sv.lstring(), s, length);
         sv.lstring()[length] = 0;
-        const(uint32_t) vptr = cast(uint32_t)(npools << POOL_BITS | nfill);
+        const(uint) vptr = cast(uint)(npools << POOL_BITS | nfill);
         nfill += nbytes + (-nbytes & 7); // align to 8 bytes
         return vptr;
     }
 
-    extern (C++) StringValue* getValue(uint32_t vptr)
+    StringValue* getValue(uint vptr) pure
     {
         if (!vptr)
             return null;
@@ -238,32 +243,31 @@ private:
         return cast(StringValue*)&pools[idx][off];
     }
 
-    extern (C++) size_t findSlot(hash_t hash, const(char)* s, size_t length)
+    size_t findSlot(hash_t hash, const(char)* s, size_t length) pure
     {
         // quadratic probing using triangular numbers
         // http://stackoverflow.com/questions/2348187/moving-from-linear-probing-to-quadratic-probing-hash-collisons/2349774#2349774
         for (size_t i = hash & (tabledim - 1), j = 1;; ++j)
         {
-            StringValue* sv;
-            if (!table[i].vptr || table[i].hash == hash && (sv = getValue(table[i].vptr)).length == length && .memcmp(s, sv.lstring(), length) == 0)
+            const(StringValue)* sv;
+            if (!table[i].vptr || table[i].hash == hash && (sv = getValue(table[i].vptr)).length == length && .memcmp(s, sv.toDchars(), length) == 0)
                 return i;
             i = (i + j) & (tabledim - 1);
         }
     }
 
-    extern (C++) void grow()
+    void grow()
     {
-        const(size_t) odim = tabledim;
-        StringEntry* otab = table;
+        const odim = tabledim;
+        auto otab = table;
         tabledim *= 2;
         table = cast(StringEntry*)mem.xcalloc(tabledim, (table[0]).sizeof);
-        for (size_t i = 0; i < odim; ++i)
+        foreach (const se; otab[0 .. odim])
         {
-            StringEntry* se = &otab[i];
             if (!se.vptr)
                 continue;
-            StringValue* sv = getValue(se.vptr);
-            table[findSlot(se.hash, sv.lstring(), sv.length)] = *se;
+            const sv = getValue(se.vptr);
+            table[findSlot(se.hash, sv.toDchars(), sv.length)] = se;
         }
         mem.xfree(otab);
     }

@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -9,7 +9,6 @@
 module ddmd.opover;
 
 import core.stdc.stdio;
-import core.stdc.string;
 import ddmd.aggregate;
 import ddmd.aliasthis;
 import ddmd.arraytypes;
@@ -30,7 +29,6 @@ import ddmd.statement;
 import ddmd.tokens;
 import ddmd.visitor;
 
-/******************************** Expression **************************/
 /***********************************
  * Determine if operands of binary op can be reversed
  * to fit operator overload.
@@ -44,22 +42,14 @@ extern (C++) bool isCommutative(TOK op)
     case TOKand:
     case TOKor:
     case TOKxor:
-        // EqualExp
+    // EqualExp
     case TOKequal:
     case TOKnotequal:
-        // CmpExp
+    // CmpExp
     case TOKlt:
     case TOKle:
     case TOKgt:
     case TOKge:
-    case TOKunord:
-    case TOKlg:
-    case TOKleg:
-    case TOKule:
-    case TOKul:
-    case TOKuge:
-    case TOKug:
-    case TOKue:
         return true;
     default:
         break;
@@ -78,192 +68,192 @@ extern (C++) static Identifier opId(Expression e)
     public:
         Identifier id;
 
-        void visit(Expression e)
+        override void visit(Expression e)
         {
             assert(0);
         }
 
-        void visit(UAddExp e)
+        override void visit(UAddExp e)
         {
             id = Id.uadd;
         }
 
-        void visit(NegExp e)
+        override void visit(NegExp e)
         {
             id = Id.neg;
         }
 
-        void visit(ComExp e)
+        override void visit(ComExp e)
         {
             id = Id.com;
         }
 
-        void visit(CastExp e)
+        override void visit(CastExp e)
         {
             id = Id._cast;
         }
 
-        void visit(InExp e)
+        override void visit(InExp e)
         {
             id = Id.opIn;
         }
 
-        void visit(PostExp e)
+        override void visit(PostExp e)
         {
             id = (e.op == TOKplusplus) ? Id.postinc : Id.postdec;
         }
 
-        void visit(AddExp e)
+        override void visit(AddExp e)
         {
             id = Id.add;
         }
 
-        void visit(MinExp e)
+        override void visit(MinExp e)
         {
             id = Id.sub;
         }
 
-        void visit(MulExp e)
+        override void visit(MulExp e)
         {
             id = Id.mul;
         }
 
-        void visit(DivExp e)
+        override void visit(DivExp e)
         {
             id = Id.div;
         }
 
-        void visit(ModExp e)
+        override void visit(ModExp e)
         {
             id = Id.mod;
         }
 
-        void visit(PowExp e)
+        override void visit(PowExp e)
         {
             id = Id.pow;
         }
 
-        void visit(ShlExp e)
+        override void visit(ShlExp e)
         {
             id = Id.shl;
         }
 
-        void visit(ShrExp e)
+        override void visit(ShrExp e)
         {
             id = Id.shr;
         }
 
-        void visit(UshrExp e)
+        override void visit(UshrExp e)
         {
             id = Id.ushr;
         }
 
-        void visit(AndExp e)
+        override void visit(AndExp e)
         {
             id = Id.iand;
         }
 
-        void visit(OrExp e)
+        override void visit(OrExp e)
         {
             id = Id.ior;
         }
 
-        void visit(XorExp e)
+        override void visit(XorExp e)
         {
             id = Id.ixor;
         }
 
-        void visit(CatExp e)
+        override void visit(CatExp e)
         {
             id = Id.cat;
         }
 
-        void visit(AssignExp e)
+        override void visit(AssignExp e)
         {
             id = Id.assign;
         }
 
-        void visit(AddAssignExp e)
+        override void visit(AddAssignExp e)
         {
             id = Id.addass;
         }
 
-        void visit(MinAssignExp e)
+        override void visit(MinAssignExp e)
         {
             id = Id.subass;
         }
 
-        void visit(MulAssignExp e)
+        override void visit(MulAssignExp e)
         {
             id = Id.mulass;
         }
 
-        void visit(DivAssignExp e)
+        override void visit(DivAssignExp e)
         {
             id = Id.divass;
         }
 
-        void visit(ModAssignExp e)
+        override void visit(ModAssignExp e)
         {
             id = Id.modass;
         }
 
-        void visit(AndAssignExp e)
+        override void visit(AndAssignExp e)
         {
             id = Id.andass;
         }
 
-        void visit(OrAssignExp e)
+        override void visit(OrAssignExp e)
         {
             id = Id.orass;
         }
 
-        void visit(XorAssignExp e)
+        override void visit(XorAssignExp e)
         {
             id = Id.xorass;
         }
 
-        void visit(ShlAssignExp e)
+        override void visit(ShlAssignExp e)
         {
             id = Id.shlass;
         }
 
-        void visit(ShrAssignExp e)
+        override void visit(ShrAssignExp e)
         {
             id = Id.shrass;
         }
 
-        void visit(UshrAssignExp e)
+        override void visit(UshrAssignExp e)
         {
             id = Id.ushrass;
         }
 
-        void visit(CatAssignExp e)
+        override void visit(CatAssignExp e)
         {
             id = Id.catass;
         }
 
-        void visit(PowAssignExp e)
+        override void visit(PowAssignExp e)
         {
             id = Id.powass;
         }
 
-        void visit(EqualExp e)
+        override void visit(EqualExp e)
         {
             id = Id.eq;
         }
 
-        void visit(CmpExp e)
+        override void visit(CmpExp e)
         {
             id = Id.cmp;
         }
 
-        void visit(ArrayExp e)
+        override void visit(ArrayExp e)
         {
             id = Id.index;
         }
 
-        void visit(PtrExp e)
+        override void visit(PtrExp e)
         {
             id = Id.opStar;
         }
@@ -286,77 +276,77 @@ extern (C++) static Identifier opId_r(Expression e)
     public:
         Identifier id;
 
-        void visit(Expression e)
+        override void visit(Expression e)
         {
             id = null;
         }
 
-        void visit(InExp e)
+        override void visit(InExp e)
         {
             id = Id.opIn_r;
         }
 
-        void visit(AddExp e)
+        override void visit(AddExp e)
         {
             id = Id.add_r;
         }
 
-        void visit(MinExp e)
+        override void visit(MinExp e)
         {
             id = Id.sub_r;
         }
 
-        void visit(MulExp e)
+        override void visit(MulExp e)
         {
             id = Id.mul_r;
         }
 
-        void visit(DivExp e)
+        override void visit(DivExp e)
         {
             id = Id.div_r;
         }
 
-        void visit(ModExp e)
+        override void visit(ModExp e)
         {
             id = Id.mod_r;
         }
 
-        void visit(PowExp e)
+        override void visit(PowExp e)
         {
             id = Id.pow_r;
         }
 
-        void visit(ShlExp e)
+        override void visit(ShlExp e)
         {
             id = Id.shl_r;
         }
 
-        void visit(ShrExp e)
+        override void visit(ShrExp e)
         {
             id = Id.shr_r;
         }
 
-        void visit(UshrExp e)
+        override void visit(UshrExp e)
         {
             id = Id.ushr_r;
         }
 
-        void visit(AndExp e)
+        override void visit(AndExp e)
         {
             id = Id.iand_r;
         }
 
-        void visit(OrExp e)
+        override void visit(OrExp e)
         {
             id = Id.ior_r;
         }
 
-        void visit(XorExp e)
+        override void visit(XorExp e)
         {
             id = Id.ixor_r;
         }
 
-        void visit(CatExp e)
+        override void visit(CatExp e)
         {
             id = Id.cat_r;
         }
@@ -461,15 +451,14 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
         extern (D) this(Scope* sc)
         {
             this.sc = sc;
-            result = null;
         }
 
-        void visit(Expression e)
+        override void visit(Expression e)
         {
             assert(0);
         }
 
-        void visit(UnaExp e)
+        override void visit(UnaExp e)
         {
             //printf("UnaExp::op_overload() (%s)\n", e->toChars());
             if (e.e1.op == TOKarray)
@@ -510,7 +499,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         /* Rewrite op(a[arguments]) as:
                          *      a.opIndexUnary!(op)(arguments)
                          */
-                        Expressions* a = cast(Expressions*)ae.arguments.copy();
+                        Expressions* a = ae.arguments.copy();
                         Objects* tiargs = opToArg(sc, e.op);
                         result = new DotTemplateInstanceExp(e.loc, ae.e1, Id.opIndexUnary, tiargs);
                         result = new CallExp(e.loc, result, a);
@@ -619,7 +608,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             }
         }
 
-        void visit(ArrayExp ae)
+        override void visit(ArrayExp ae)
         {
             //printf("ArrayExp::op_overload() (%s)\n", ae->toChars());
             ae.e1 = ae.e1.semantic(sc);
@@ -678,7 +667,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     /* Rewrite e1[arguments] as:
                      *      e1.opIndex(arguments)
                      */
-                    Expressions* a = cast(Expressions*)ae.arguments.copy();
+                    Expressions* a = ae.arguments.copy();
                     result = new DotIdExp(ae.loc, ae.e1, Id.index);
                     result = new CallExp(ae.loc, result, a);
                     if (maybeSlice) // a[] might be: a.opSlice()
@@ -743,7 +732,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
          * This is mostly the same as UnaryExp::op_overload(), but has
          * a different rewrite.
          */
-        void visit(CastExp e)
+        override void visit(CastExp e)
         {
             //printf("CastExp::op_overload() (%s)\n", e->toChars());
             AggregateDeclaration ad = isAggregate(e.e1.type);
@@ -788,7 +777,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             }
         }
 
-        void visit(BinExp e)
+        override void visit(BinExp e)
         {
             //printf("BinExp::op_overload() (%s)\n", e->toChars());
             Identifier id = opId(e);
@@ -881,7 +870,6 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 expandTuples(&args2);
                 argsset = 1;
                 Match m;
-                memset(&m, 0, m.sizeof);
                 m.last = MATCHnomatch;
                 if (s)
                 {
@@ -968,7 +956,6 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                             expandTuples(&args2);
                         }
                         Match m;
-                        memset(&m, 0, m.sizeof);
                         m.last = MATCHnomatch;
                         if (s_r)
                         {
@@ -1024,25 +1011,6 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         case TOKge:
                             e.op = TOKle;
                             break;
-                            // Floating point compares
-                        case TOKule:
-                            e.op = TOKuge;
-                            break;
-                        case TOKul:
-                            e.op = TOKug;
-                            break;
-                        case TOKuge:
-                            e.op = TOKule;
-                            break;
-                        case TOKug:
-                            e.op = TOKul;
-                            break;
-                            // These are symmetric
-                        case TOKunord:
-                        case TOKlg:
-                        case TOKleg:
-                        case TOKue:
-                            break;
                         default:
                             break;
                         }
@@ -1090,11 +1058,79 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             return;
         }
 
-        void visit(EqualExp e)
+        override void visit(EqualExp e)
         {
             //printf("EqualExp::op_overload() (%s)\n", e->toChars());
             Type t1 = e.e1.type.toBasetype();
             Type t2 = e.e2.type.toBasetype();
+
+            /* Check for array equality.
+             */
+            if ((t1.ty == Tarray || t1.ty == Tsarray) &&
+                (t2.ty == Tarray || t2.ty == Tsarray))
+            {
+                bool needsDirectEq()
+                {
+                    Type t1n = t1.nextOf().toBasetype();
+                    Type t2n = t2.nextOf().toBasetype();
+                    if (((t1n.ty == Tchar || t1n.ty == Twchar || t1n.ty == Tdchar) &&
+                         (t2n.ty == Tchar || t2n.ty == Twchar || t2n.ty == Tdchar)) ||
+                        (t1n.ty == Tvoid || t2n.ty == Tvoid))
+                    {
+                        return false;
+                    }
+                    if (t1n.constOf() != t2n.constOf())
+                        return true;
+
+                    Type t = t1n;
+                    while (t.toBasetype().nextOf())
+                        t = t.nextOf().toBasetype();
+                    if (t.ty != Tstruct)
+                        return false;
+
+                    semanticTypeInfo(sc, t);
+                    return (cast(TypeStruct)t).sym.hasIdentityEquals;
+                }
+
+                if (needsDirectEq())
+                {
+                    /* Rewrite as:
+                     *      _ArrayEq(e1, e2)
+                     */
+                    Expression eeq = new IdentifierExp(e.loc, Id._ArrayEq);
+                    result = new CallExp(e.loc, eeq, e.e1, e.e2);
+                    if (e.op == TOKnotequal)
+                        result = new NotExp(e.loc, result);
+                    result = result.trySemantic(sc); // for better error message
+                    if (!result)
+                    {
+                        e.error("cannot compare %s and %s", t1.toChars(), t2.toChars());
+                        result = new ErrorExp();
+                    }
+                    return;
+                }
+            }
+
+            /* Check for class equality with null literal or typeof(null).
+             */
+            if (t1.ty == Tclass && e.e2.op == TOKnull ||
+                t2.ty == Tclass && e.e1.op == TOKnull)
+            {
+                e.error("use '%s' instead of '%s' when comparing with null",
+                    Token.toChars(e.op == TOKequal ? TOKidentity : TOKnotidentity),
+                    Token.toChars(e.op));
+                result = new ErrorExp();
+                return;
+            }
+            if (t1.ty == Tclass && t2.ty == Tnull ||
+                t1.ty == Tnull && t2.ty == Tclass)
+            {
+                // Comparing a class with typeof(null) should not call opEquals
+                return;
+            }
+
+            /* Check for class equality.
+             */
             if (t1.ty == Tclass && t2.ty == Tclass)
             {
                 ClassDeclaration cd1 = t1.isClassHandle();
@@ -1106,34 +1142,153 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                      */
                     Expression e1x = e.e1;
                     Expression e2x = e.e2;
-                    /*
-                     * The explicit cast is necessary for interfaces,
-                     * see http://d.puremagic.com/issues/show_bug.cgi?id=4088
+
+                    /* The explicit cast is necessary for interfaces,
+                     * see Bugzilla 4088.
                      */
                     Type to = ClassDeclaration.object.getType();
                     if (cd1.isInterfaceDeclaration())
                         e1x = new CastExp(e.loc, e.e1, t1.isMutable() ? to : to.constOf());
                     if (cd2.isInterfaceDeclaration())
                         e2x = new CastExp(e.loc, e.e2, t2.isMutable() ? to : to.constOf());
+
                     result = new IdentifierExp(e.loc, Id.empty);
                     result = new DotIdExp(e.loc, result, Id.object);
                     result = new DotIdExp(e.loc, result, Id.eq);
                     result = new CallExp(e.loc, result, e1x, e2x);
+                    if (e.op == TOKnotequal)
+                        result = new NotExp(e.loc, result);
                     result = result.semantic(sc);
                     return;
                 }
             }
-            // Comparing a class with typeof(null) should not call opEquals
-            if (t1.ty == Tclass && t2.ty == Tnull || t1.ty == Tnull && t2.ty == Tclass)
+
+            result = compare_overload(e, sc, Id.eq);
+            if (result)
             {
+                if (result.op == TOKcall && e.op == TOKnotequal)
+                {
+                    result = new NotExp(result.loc, result);
+                    result = result.semantic(sc);
+                }
+                return;
             }
-            else
+
+            /* Check for pointer equality.
+             */
+            if (t1.ty == Tpointer || t2.ty == Tpointer)
             {
-                result = compare_overload(e, sc, Id.eq);
+                /* Rewrite:
+                 *      ptr1 == ptr2
+                 * as:
+                 *      ptr1 is ptr2
+                 *
+                 * This is just a rewriting for deterministic AST representation
+                 * as the backend input.
+                 */
+                auto op2 = e.op == TOKequal ? TOKidentity : TOKnotidentity;
+                result = new IdentityExp(op2, e.loc, e.e1, e.e2);
+                result = result.semantic(sc);
+                return;
+            }
+
+            /* Check for struct equality without opEquals.
+             */
+            if (t1.ty == Tstruct && t2.ty == Tstruct)
+            {
+                auto sd = (cast(TypeStruct)t1).sym;
+                if (sd != (cast(TypeStruct)t2).sym)
+                    return;
+
+                import ddmd.clone : needOpEquals;
+                if (!needOpEquals(sd))
+                {
+                    // Use bitwise equality.
+                    auto op2 = e.op == TOKequal ? TOKidentity : TOKnotidentity;
+                    result = new IdentityExp(op2, e.loc, e.e1, e.e2);
+                    result = result.semantic(sc);
+                    return;
+                }
+
+                /* Do memberwise equality.
+                 * Rewrite:
+                 *      e1 == e2
+                 * as:
+                 *      e1.tupleof == e2.tupleof
+                 *
+                 * If sd is a nested struct, and if it's nested in a class, it will
+                 * also compare the parent class's equality. Otherwise, compares
+                 * the identity of parent context through void*.
+                 */
+                if (e.att1 && t1 == e.att1) return;
+                if (e.att2 && t2 == e.att2) return;
+
+                e = cast(EqualExp)e.copy();
+                if (!e.att1) e.att1 = t1;
+                if (!e.att2) e.att2 = t2;
+                e.e1 = new DotIdExp(e.loc, e.e1, Id._tupleof);
+                e.e2 = new DotIdExp(e.loc, e.e2, Id._tupleof);
+                result = e.semantic(sc);
+
+                /* Bugzilla 15292, if the rewrite result is same with the original,
+                 * the equality is unresolvable because it has recursive definition.
+                 */
+                if (result.op == e.op &&
+                    (cast(EqualExp)result).e1.type.toBasetype() == t1)
+                {
+                    e.error("cannot compare %s because its auto generated member-wise equality has recursive definition",
+                        t1.toChars());
+                    result = new ErrorExp();
+                }
+                return;
+            }
+
+            /* Check for tuple equality.
+             */
+            if (e.e1.op == TOKtuple && e.e2.op == TOKtuple)
+            {
+                auto tup1 = cast(TupleExp)e.e1;
+                auto tup2 = cast(TupleExp)e.e2;
+                size_t dim = tup1.exps.dim;
+                if (dim != tup2.exps.dim)
+                {
+                    e.error("mismatched tuple lengths, %d and %d",
+                        cast(int)dim, cast(int)tup2.exps.dim);
+                    result = new ErrorExp();
+                    return;
+                }
+
+                if (dim == 0)
+                {
+                    // zero-length tuple comparison should always return true or false.
+                    result = new IntegerExp(e.loc, (e.op == TOKequal), Type.tbool);
+                }
+                else
+                {
+                    for (size_t i = 0; i < dim; i++)
+                    {
+                        auto ex1 = (*tup1.exps)[i];
+                        auto ex2 = (*tup2.exps)[i];
+                        auto eeq = new EqualExp(e.op, e.loc, ex1, ex2);
+                        eeq.att1 = e.att1;
+                        eeq.att2 = e.att2;
+
+                        if (!result)
+                            result = eeq;
+                        else if (e.op == TOKequal)
+                            result = new AndAndExp(e.loc, result, eeq);
+                        else
+                            result = new OrOrExp(e.loc, result, eeq);
+                    }
+                    assert(result);
+                }
+                result = Expression.combine(Expression.combine(tup1.e0, tup2.e0), result);
+                result = result.semantic(sc);
+                return;
             }
         }
 
-        void visit(CmpExp e)
+        override void visit(CmpExp e)
         {
             //printf("CmpExp::op_overload() (%s)\n", e->toChars());
             result = compare_overload(e, sc, Id.cmp);
@@ -1142,7 +1297,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
         /*********************************
          * Operator overloading for op=
          */
-        void visit(BinAssignExp e)
+        override void visit(BinAssignExp e)
         {
             //printf("BinAssignExp::op_overload() (%s)\n", e->toChars());
             if (e.e1.op == TOKarray)
@@ -1187,7 +1342,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         /* Rewrite a[arguments] op= e2 as:
                          *      a.opIndexOpAssign!(op)(e2, arguments)
                          */
-                        Expressions* a = cast(Expressions*)ae.arguments.copy();
+                        Expressions* a = ae.arguments.copy();
                         a.insert(0, e.e2);
                         Objects* tiargs = opToArg(sc, e.op);
                         result = new DotTemplateInstanceExp(e.loc, ae.e1, Id.opIndexOpAssign, tiargs);
@@ -1299,7 +1454,6 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 args2[0] = e.e2;
                 expandTuples(&args2);
                 Match m;
-                memset(&m, 0, m.sizeof);
                 m.last = MATCHnomatch;
                 if (s)
                 {
@@ -1406,7 +1560,6 @@ extern (C++) Expression compare_overload(BinExp e, Scope* sc, Identifier id)
         args2[0] = e.e2;
         expandTuples(&args2);
         Match m;
-        memset(&m, 0, m.sizeof);
         m.last = MATCHnomatch;
         if (0 && s && s_r)
         {
@@ -1476,20 +1629,6 @@ extern (C++) Expression compare_overload(BinExp e, Scope* sc, Identifier id)
             case TOKge:
                 e.op = TOKle;
                 break;
-                // Floating point compares
-            case TOKule:
-                e.op = TOKuge;
-                break;
-            case TOKul:
-                e.op = TOKug;
-                break;
-            case TOKuge:
-                e.op = TOKule;
-                break;
-            case TOKug:
-                e.op = TOKul;
-                break;
-                // The rest are symmetric
             default:
                 break;
             }
@@ -1543,7 +1682,7 @@ extern (C++) Expression build_overload(Loc loc, Scope* sc, Expression ethis, Exp
     //earg->type->print();
     Declaration decl = d.isDeclaration();
     if (decl)
-        e = new DotVarExp(loc, ethis, decl, 0);
+        e = new DotVarExp(loc, ethis, decl, false);
     else
         e = new DotIdExp(loc, ethis, d.ident);
     e = new CallExp(loc, e, earg);
@@ -1792,68 +1931,57 @@ extern (C++) bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbo
             break;
         }
     default:
-        break;
-        // ignore error, caught later
+        break; // ignore error, caught later
     }
     return true;
 }
 
 extern (C++) static Dsymbol inferApplyArgTypesX(Expression ethis, FuncDeclaration fstart, Parameters* parameters)
 {
-    struct ParamOpOver
+    MOD mod = ethis.type.mod;
+    MATCH match = MATCHnomatch;
+    FuncDeclaration fd_best;
+    FuncDeclaration fd_ambig;
+    overloadApply(fstart, (Dsymbol s)
     {
-        Parameters* parameters;
-        MOD mod;
-        MATCH match;
-        FuncDeclaration fd_best;
-        FuncDeclaration fd_ambig;
-
-        extern (C++) static int fp(void* param, Dsymbol s)
-        {
-            FuncDeclaration f = s.isFuncDeclaration();
-            if (!f)
-                return 0;
-            ParamOpOver* p = cast(ParamOpOver*)param;
-            TypeFunction tf = cast(TypeFunction)f.type;
-            MATCH m = MATCHexact;
-            if (f.isThis())
-            {
-                if (!MODimplicitConv(p.mod, tf.mod))
-                    m = MATCHnomatch;
-                else if (p.mod != tf.mod)
-                    m = MATCHconst;
-            }
-            if (!inferApplyArgTypesY(tf, p.parameters, 1))
-                m = MATCHnomatch;
-            if (m > p.match)
-            {
-                p.fd_best = f;
-                p.fd_ambig = null;
-                p.match = m;
-            }
-            else if (m == p.match)
-                p.fd_ambig = f;
+        auto f = s.isFuncDeclaration();
+        if (!f)
             return 0;
-        }
-    }
-
-    ParamOpOver p;
-    p.parameters = parameters;
-    p.mod = ethis.type.mod;
-    p.match = MATCHnomatch;
-    p.fd_best = null;
-    p.fd_ambig = null;
-    overloadApply(fstart, &p, &ParamOpOver.fp);
-    if (p.fd_best)
-    {
-        inferApplyArgTypesY(cast(TypeFunction)p.fd_best.type, parameters);
-        if (p.fd_ambig)
+        auto tf = cast(TypeFunction)f.type;
+        MATCH m = MATCHexact;
+        if (f.isThis())
         {
-            .error(ethis.loc, "%s.%s matches more than one declaration:\n%s:     %s\nand:\n%s:     %s", ethis.toChars(), fstart.ident.toChars(), p.fd_best.loc.toChars(), p.fd_best.type.toChars(), p.fd_ambig.loc.toChars(), p.fd_ambig.type.toChars());
-            p.fd_best = null;
+            if (!MODimplicitConv(mod, tf.mod))
+                m = MATCHnomatch;
+            else if (mod != tf.mod)
+                m = MATCHconst;
+        }
+        if (!inferApplyArgTypesY(tf, parameters, 1))
+            m = MATCHnomatch;
+        if (m > match)
+        {
+            fd_best = f;
+            fd_ambig = null;
+            match = m;
+        }
+        else if (m == match)
+            fd_ambig = f;
+        return 0;
+    });
+
+    if (fd_best)
+    {
+        inferApplyArgTypesY(cast(TypeFunction)fd_best.type, parameters);
+        if (fd_ambig)
+        {
+            .error(ethis.loc, "%s.%s matches more than one declaration:\n%s:     %s\nand:\n%s:     %s",
+                ethis.toChars(), fstart.ident.toChars(),
+                fd_best.loc.toChars(), fd_best.type.toChars(),
+                fd_ambig.loc.toChars(), fd_ambig.type.toChars());
+            fd_best = null;
         }
     }
-    return p.fd_best;
+    return fd_best;
 }
 
 /******************************
@@ -1878,11 +2006,9 @@ extern (C++) static int inferApplyArgTypesY(TypeFunction tf, Parameters* paramet
      */
     nparams = Parameter.dim(tf.parameters);
     if (nparams == 0 || tf.varargs)
-        goto Lnomatch;
-    // not enough parameters
+        goto Lnomatch; // not enough parameters
     if (parameters.dim != nparams)
-        goto Lnomatch;
-    // not enough parameters
+        goto Lnomatch; // not enough parameters
     for (size_t u = 0; u < nparams; u++)
     {
         p = (*parameters)[u];

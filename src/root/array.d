@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -14,7 +14,6 @@ import ddmd.root.rmem;
 
 extern (C++) struct Array(T)
 {
-public:
     size_t dim;
     T* data;
 
@@ -24,17 +23,19 @@ private:
     T[SMALLARRAYCAP] smallarray; // inline storage for small arrays
 
 public:
-    ~this()
+    @disable this(this);
+
+    ~this() nothrow
     {
         if (data != &smallarray[0])
             mem.xfree(data);
     }
 
-    char* toChars()
+    const(char)* toChars()
     {
         static if (is(typeof(T.init.toChars())))
         {
-            char** buf = cast(char**)mem.xmalloc(dim * (char*).sizeof);
+            const(char)** buf = cast(const(char)**)mem.xmalloc(dim * (char*).sizeof);
             size_t len = 2;
             for (size_t u = 0; u < dim; u++)
             {
@@ -64,18 +65,18 @@ public:
         }
     }
 
-    void push(T ptr)
+    void push(T ptr) nothrow
     {
         reserve(1);
         data[dim++] = ptr;
     }
 
-    void append(typeof(this)* a)
+    void append(typeof(this)* a) nothrow
     {
         insert(dim, a);
     }
 
-    void reserve(size_t nentries)
+    void reserve(size_t nentries) nothrow
     {
         //printf("Array::reserve: dim = %d, allocdim = %d, nentries = %d\n", (int)dim, (int)allocdim, (int)nentries);
         if (allocdim - dim < nentries)
@@ -108,14 +109,14 @@ public:
         }
     }
 
-    void remove(size_t i)
+    void remove(size_t i) nothrow
     {
         if (dim - i - 1)
             memmove(data + i, data + i + 1, (dim - i - 1) * (data[0]).sizeof);
         dim--;
     }
 
-    void insert(size_t index, typeof(this)* a)
+    void insert(size_t index, typeof(this)* a) nothrow
     {
         if (a)
         {
@@ -128,7 +129,7 @@ public:
         }
     }
 
-    void insert(size_t index, T ptr)
+    void insert(size_t index, T ptr) nothrow
     {
         reserve(1);
         memmove(data + index + 1, data + index, (dim - index) * (*data).sizeof);
@@ -136,7 +137,7 @@ public:
         dim++;
     }
 
-    void setDim(size_t newdim)
+    void setDim(size_t newdim) nothrow
     {
         if (dim < newdim)
         {
@@ -145,25 +146,25 @@ public:
         dim = newdim;
     }
 
-    ref T opIndex(size_t i)
+    ref inout(T) opIndex(size_t i) inout nothrow pure
     {
         return data[i];
     }
 
-    T* tdata()
+    inout(T)* tdata() inout nothrow
     {
         return data;
     }
 
-    typeof(this)* copy()
+    Array!T* copy() const nothrow
     {
-        auto a = new typeof(this)();
+        auto a = new Array!T();
         a.setDim(dim);
         memcpy(a.data, data, dim * (void*).sizeof);
         return a;
     }
 
-    void shift(T ptr)
+    void shift(T ptr) nothrow
     {
         reserve(1);
         memmove(data + 1, data, dim * (*data).sizeof);
@@ -171,37 +172,73 @@ public:
         dim++;
     }
 
-    void zero()
+    void zero() nothrow pure
     {
-        memset(data, 0, dim * (data[0]).sizeof);
+        data[0 .. dim] = T.init;
     }
 
-    T pop()
+    T pop() nothrow pure
     {
         return data[--dim];
     }
 
-    int apply(int function(T, void*) fp, void* param)
-    {
-        static if (is(typeof(T.init.apply(fp, null))))
-        {
-            for (size_t i = 0; i < dim; i++)
-            {
-                T e = data[i];
-                if (e)
-                {
-                    if (e.apply(fp, param))
-                        return 1;
-                }
-            }
-            return 0;
-        }
-        else
-            assert(0);
-    }
-
-    extern (D) T[] opSlice()
+    extern (D) inout(T)[] opSlice() inout nothrow pure
     {
         return data[0 .. dim];
     }
+
+    extern (D) inout(T)[] opSlice(size_t a, size_t b) inout nothrow pure
+    {
+        assert(a <= b && b <= dim);
+        return data[a .. b];
+    }
+}
+
+struct BitArray
+{
+nothrow:
+    size_t length() const pure
+    {
+        return len;
+    }
+
+    void length(size_t nlen)
+    {
+        immutable obytes = (len + 7) / 8;
+        immutable nbytes = (nlen + 7) / 8;
+        ptr = cast(size_t*)mem.xrealloc(ptr, nbytes);
+        if (nbytes > obytes)
+            (cast(ubyte*)ptr)[obytes .. nbytes] = 0;
+        len = nlen;
+    }
+
+    bool opIndex(size_t idx) const pure
+    {
+        import core.bitop : bt;
+
+        assert(idx < length);
+        return !!bt(ptr, idx);
+    }
+
+    void opIndexAssign(bool val, size_t idx) pure
+    {
+        import core.bitop : btc, bts;
+
+        assert(idx < length);
+        if (val)
+            bts(ptr, idx);
+        else
+            btc(ptr, idx);
+    }
+
+    @disable this(this);
+
+    ~this()
+    {
+        mem.xfree(ptr);
+    }
+
+private:
+    size_t len;
+    size_t *ptr;
 }

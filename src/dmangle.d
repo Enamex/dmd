@@ -1,98 +1,131 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the $(LINK2 http://www.dlang.org, D programming language)
+ *
+ * Copyright: Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors: Walter Bright, http://www.digitalmars.com
+ * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:    $(DMDSRC _dmangle.d)
+ */
 
 module ddmd.dmangle;
 
 import core.stdc.ctype;
 import core.stdc.stdio;
 import core.stdc.string;
+
 import ddmd.aggregate;
 import ddmd.arraytypes;
 import ddmd.cppmangle;
 import ddmd.dclass;
 import ddmd.declaration;
 import ddmd.dmodule;
-import ddmd.dstruct;
 import ddmd.dsymbol;
 import ddmd.dtemplate;
-import ddmd.errors;
 import ddmd.expression;
 import ddmd.func;
 import ddmd.globals;
 import ddmd.id;
 import ddmd.mtype;
-import ddmd.root.longdouble;
 import ddmd.root.outbuffer;
 import ddmd.root.port;
 import ddmd.utf;
 import ddmd.visitor;
 
-extern (C++) __gshared const(char)*[TMAX] mangleChar;
+private immutable char[TMAX] mangleChar =
+[
+    Tchar        : 'a',
+    Tbool        : 'b',
+    Tcomplex80   : 'c',
+    Tfloat64     : 'd',
+    Tfloat80     : 'e',
+    Tfloat32     : 'f',
+    Tint8        : 'g',
+    Tuns8        : 'h',
+    Tint32       : 'i',
+    Timaginary80 : 'j',
+    Tuns32       : 'k',
+    Tint64       : 'l',
+    Tuns64       : 'm',
+    Tnone        : 'n',
+    Tnull        : 'n', // yes, same as TypeNone
+    Timaginary32 : 'o',
+    Timaginary64 : 'p',
+    Tcomplex32   : 'q',
+    Tcomplex64   : 'r',
+    Tint16       : 's',
+    Tuns16       : 't',
+    Twchar       : 'u',
+    Tvoid        : 'v',
+    Tdchar       : 'w',
+    //              x   // const
+    //              y   // immutable
+    Tint128      : 'z', // zi
+    Tuns128      : 'z', // zk
 
-extern (C++) void initTypeMangle()
-{
-    mangleChar[Tarray] = "A";
-    mangleChar[Tsarray] = "G";
-    mangleChar[Taarray] = "H";
-    mangleChar[Tpointer] = "P";
-    mangleChar[Treference] = "R";
-    mangleChar[Tfunction] = "F";
-    mangleChar[Tident] = "I";
-    mangleChar[Tclass] = "C";
-    mangleChar[Tstruct] = "S";
-    mangleChar[Tenum] = "E";
-    mangleChar[Tdelegate] = "D";
-    mangleChar[Tnone] = "n";
-    mangleChar[Tvoid] = "v";
-    mangleChar[Tint8] = "g";
-    mangleChar[Tuns8] = "h";
-    mangleChar[Tint16] = "s";
-    mangleChar[Tuns16] = "t";
-    mangleChar[Tint32] = "i";
-    mangleChar[Tuns32] = "k";
-    mangleChar[Tint64] = "l";
-    mangleChar[Tuns64] = "m";
-    mangleChar[Tint128] = "zi";
-    mangleChar[Tuns128] = "zk";
-    mangleChar[Tfloat32] = "f";
-    mangleChar[Tfloat64] = "d";
-    mangleChar[Tfloat80] = "e";
-    mangleChar[Timaginary32] = "o";
-    mangleChar[Timaginary64] = "p";
-    mangleChar[Timaginary80] = "j";
-    mangleChar[Tcomplex32] = "q";
-    mangleChar[Tcomplex64] = "r";
-    mangleChar[Tcomplex80] = "c";
-    mangleChar[Tbool] = "b";
-    mangleChar[Tchar] = "a";
-    mangleChar[Twchar] = "u";
-    mangleChar[Tdchar] = "w";
+    Tarray       : 'A',
+    Ttuple       : 'B',
+    Tclass       : 'C',
+    Tdelegate    : 'D',
+    Tenum        : 'E',
+    Tfunction    : 'F', // D function
+    Tsarray      : 'G',
+    Taarray      : 'H',
+    Tident       : 'I',
+    //              J   // out
+    //              K   // ref
+    //              L   // lazy
+    //              M   // has this, or scope
+    //              N   // Nh:vector Ng:wild
+    //              O   // shared
+    Tpointer     : 'P',
+    //              Q
+    Treference   : 'R',
+    Tstruct      : 'S',
+    //              T   // Ttypedef
+    //              U   // C function
+    //              V   // Pascal function
+    //              W   // Windows function
+    //              X   // variadic T t...)
+    //              Y   // variadic T t,...)
+    //              Z   // not variadic, end of parameters
+
     // '@' shouldn't appear anywhere in the deco'd names
-    mangleChar[Tinstance] = "@";
-    mangleChar[Terror] = "@";
-    mangleChar[Ttypeof] = "@";
-    mangleChar[Ttuple] = "B";
-    mangleChar[Tslice] = "@";
-    mangleChar[Treturn] = "@";
-    mangleChar[Tvector] = "@";
-    mangleChar[Tnull] = "n"; // same as TypeNone
-    for (size_t i = 0; i < TMAX; i++)
+    Tinstance    : '@',
+    Terror       : '@',
+    Ttypeof      : '@',
+    Tslice       : '@',
+    Treturn      : '@',
+    Tvector      : '@',
+];
+
+unittest
+{
+    foreach (i, mangle; mangleChar)
     {
-        if (!mangleChar[i])
-            fprintf(stderr, "ty = %llu\n", cast(ulong)i);
-        assert(mangleChar[i]);
+        if (mangle == char.init)
+        {
+            fprintf(stderr, "ty = %u\n", cast(uint)i);
+            assert(0);
+        }
     }
+}
+
+/***********************
+ * Mangle basic type ty to buf.
+ */
+
+private void tyToDecoBuffer(OutBuffer* buf, int ty)
+{
+    const c = mangleChar[ty];
+    buf.writeByte(c);
+    if (c == 'z')
+        buf.writeByte(ty == Tint128 ? 'i' : 'k');
 }
 
 /*********************************
  * Mangling for mod.
  */
-extern (C++) void MODtoDecoBuffer(OutBuffer* buf, MOD mod)
+private void MODtoDecoBuffer(OutBuffer* buf, MOD mod)
 {
     switch (mod)
     {
@@ -144,6 +177,11 @@ public:
      */
     void visitWithMask(Type t, ubyte modMask)
     {
+        if (t.deco && modMask == 0)
+        {
+            buf.writestring(t.deco);    // don't need to recreate it
+            return;
+        }
         if (modMask != t.mod)
         {
             MODtoDecoBuffer(buf, t.mod);
@@ -151,56 +189,56 @@ public:
         t.accept(this);
     }
 
-    void visit(Type t)
+    override void visit(Type t)
     {
-        buf.writestring(mangleChar[t.ty]);
+        tyToDecoBuffer(buf, t.ty);
     }
 
-    void visit(TypeNext t)
+    override void visit(TypeNext t)
     {
         visit(cast(Type)t);
         visitWithMask(t.next, t.mod);
     }
 
-    void visit(TypeVector t)
+    override void visit(TypeVector t)
     {
         buf.writestring("Nh");
         visitWithMask(t.basetype, t.mod);
     }
 
-    void visit(TypeSArray t)
+    override void visit(TypeSArray t)
     {
         visit(cast(Type)t);
         if (t.dim)
-            buf.printf("%llu", t.dim.toInteger());
+            buf.printf("%u", cast(uint)t.dim.toInteger());
         if (t.next)
             visitWithMask(t.next, t.mod);
     }
 
-    void visit(TypeDArray t)
+    override void visit(TypeDArray t)
     {
         visit(cast(Type)t);
         if (t.next)
             visitWithMask(t.next, t.mod);
     }
 
-    void visit(TypeAArray t)
+    override void visit(TypeAArray t)
     {
         visit(cast(Type)t);
         visitWithMask(t.index, 0);
         visitWithMask(t.next, t.mod);
     }
 
-    void visit(TypeFunction t)
+    override void visit(TypeFunction t)
     {
-        //printf("TypeFunction::toDecoBuffer() t = %p %s\n", t, t->toChars());
+        //printf("TypeFunction.toDecoBuffer() t = %p %s\n", t, t.toChars());
         //static int nest; if (++nest == 50) *(char*)0=0;
         mangleFuncType(t, t, t.mod, t.next);
     }
 
     void mangleFuncType(TypeFunction t, TypeFunction ta, ubyte modMask, Type tret)
     {
-        //printf("mangleFuncType() %s\n", t->toChars());
+        //printf("mangleFuncType() %s\n", t.toChars());
         if (t.inuse)
         {
             t.inuse = 2; // flag error to caller
@@ -262,14 +300,14 @@ public:
         }
         // Write argument types
         paramsToDecoBuffer(t.parameters);
-        //if (buf->data[buf->offset - 1] == '@') halt();
+        //if (buf.data[buf.offset - 1] == '@') assert(0);
         buf.writeByte('Z' - t.varargs); // mark end of arg list
         if (tret !is null)
             visitWithMask(tret, 0);
         t.inuse--;
     }
 
-    void visit(TypeIdentifier t)
+    override void visit(TypeIdentifier t)
     {
         visit(cast(Type)t);
         const(char)* name = t.ident.toChars();
@@ -277,39 +315,40 @@ public:
         buf.printf("%u%s", cast(uint)len, name);
     }
 
-    void visit(TypeEnum t)
+    override void visit(TypeEnum t)
     {
         visit(cast(Type)t);
         t.sym.accept(this);
     }
 
-    void visit(TypeStruct t)
+    override void visit(TypeStruct t)
     {
-        //printf("TypeStruct::toDecoBuffer('%s') = '%s'\n", t->toChars(), name);
+        //printf("TypeStruct.toDecoBuffer('%s') = '%s'\n", t.toChars(), name);
         visit(cast(Type)t);
         t.sym.accept(this);
     }
 
-    void visit(TypeClass t)
+    override void visit(TypeClass t)
     {
-        //printf("TypeClass::toDecoBuffer('%s' mod=%x) = '%s'\n", t->toChars(), mod, name);
+        //printf("TypeClass.toDecoBuffer('%s' mod=%x) = '%s'\n", t.toChars(), mod, name);
         visit(cast(Type)t);
         t.sym.accept(this);
     }
 
-    void visit(TypeTuple t)
+    override void visit(TypeTuple t)
     {
-        //printf("TypeTuple::toDecoBuffer() t = %p, %s\n", t, t->toChars());
+        //printf("TypeTuple.toDecoBuffer() t = %p, %s\n", t, t.toChars());
         visit(cast(Type)t);
         OutBuffer buf2;
         buf2.reserve(32);
         scope Mangler v = new Mangler(&buf2);
         v.paramsToDecoBuffer(t.arguments);
-        int len = cast(int)buf2.offset;
-        buf.printf("%d%.*s", len, len, buf2.extractData());
+        auto s = buf2.peekSlice();
+        int len = cast(int)s.length;
+        buf.printf("%d%.*s", len, len, s.ptr);
     }
 
-    void visit(TypeNull t)
+    override void visit(TypeNull t)
     {
         visit(cast(Type)t);
     }
@@ -357,8 +396,8 @@ public:
 
     void mangleFunc(FuncDeclaration fd, bool inParent)
     {
-        //printf("deco = '%s'\n", fd->type->deco ? fd->type->deco : "null");
-        //printf("fd->type = %s\n", fd->type->toChars());
+        //printf("deco = '%s'\n", fd.type.deco ? fd.type.deco : "null");
+        //printf("fd.type = %s\n", fd.type.toChars());
         if (fd.needThis() || fd.isNested())
             buf.writeByte(Type.needThisPrefix());
         if (inParent)
@@ -388,15 +427,15 @@ public:
             s.error("excessive length %llu for symbol, possible recursive expansion?", len);
         else
         {
-            buf.printf("%llu", cast(ulong)len);
+            buf.printf("%u", cast(uint)len);
             buf.write(id, len);
         }
     }
 
-    void visit(Declaration d)
+    override void visit(Declaration d)
     {
-        //printf("Declaration::mangle(this = %p, '%s', parent = '%s', linkage = %d)\n",
-        //        d, d->toChars(), d->parent ? d->parent->toChars() : "null", d->linkage);
+        //printf("Declaration.mangle(this = %p, '%s', parent = '%s', linkage = %d)\n",
+        //        d, d.toChars(), d.parent ? d.parent.toChars() : "null", d.linkage);
         if (!d.parent || d.parent.isModule() || d.linkage == LINKcpp) // if at global scope
         {
             switch (d.linkage)
@@ -419,19 +458,17 @@ public:
             default:
                 fprintf(stderr, "'%s', linkage = %d\n", d.toChars(), d.linkage);
                 assert(0);
-                return;
             }
         }
         buf.writestring("_D");
         mangleDecl(d);
         debug
         {
-            assert(buf.data);
-            size_t len = buf.offset;
-            assert(len > 0);
-            for (size_t i = 0; i < len; i++)
+            const slice = buf.peekSlice();
+            assert(slice.length);
+            foreach (const char c; slice)
             {
-                assert(buf.data[i] == '_' || buf.data[i] == '@' || buf.data[i] == '?' || buf.data[i] == '$' || isalnum(buf.data[i]) || buf.data[i] & 0x80);
+                assert(c == '_' || c == '@' || c == '?' || c == '$' || isalnum(c) || c & 0x80);
             }
         }
     }
@@ -445,11 +482,11 @@ public:
      *      void foo(long) {}           // _D4test3fooFlZv
      *      void foo(string) {}         // _D4test3fooFAyaZv
      *
-     *      // from FuncDeclaration::mangle().
+     *      // from FuncDeclaration.mangle().
      *      pragma(msg, foo.mangleof);  // prints unexact mangled name "4test3foo"
-     *                                  // by calling Dsymbol::mangle()
+     *                                  // by calling Dsymbol.mangle()
      *
-     *      // from FuncAliasDeclaration::mangle()
+     *      // from FuncAliasDeclaration.mangle()
      *      pragma(msg, __traits(getOverloads, test, "foo")[0].mangleof);  // "_D4test3fooFlZv"
      *      pragma(msg, __traits(getOverloads, test, "foo")[1].mangleof);  // "_D4test3fooFAyaZv"
      *
@@ -457,9 +494,9 @@ public:
      *
      *      void bar() {}
      *      pragma(msg, bar.mangleof);  // still prints "_D4test3barFZv"
-     *                                  // by calling FuncDeclaration::mangleExact().
+     *                                  // by calling FuncDeclaration.mangleExact().
      */
-    void visit(FuncDeclaration fd)
+    override void visit(FuncDeclaration fd)
     {
         if (fd.isUnique())
             mangleExact(fd);
@@ -468,7 +505,7 @@ public:
     }
 
     // ditto
-    void visit(FuncAliasDeclaration fd)
+    override void visit(FuncAliasDeclaration fd)
     {
         FuncDeclaration f = fd.toAliasFunc();
         FuncAliasDeclaration fa = f.isFuncAliasDeclaration();
@@ -485,7 +522,7 @@ public:
         visit(cast(Dsymbol)fd);
     }
 
-    void visit(OverDeclaration od)
+    override void visit(OverDeclaration od)
     {
         if (od.overnext)
         {
@@ -532,7 +569,7 @@ public:
         visit(cast(Declaration)fd);
     }
 
-    void visit(VarDeclaration vd)
+    override void visit(VarDeclaration vd)
     {
         if (vd.mangleOverride)
         {
@@ -542,7 +579,7 @@ public:
         visit(cast(Declaration)vd);
     }
 
-    void visit(AggregateDeclaration ad)
+    override void visit(AggregateDeclaration ad)
     {
         ClassDeclaration cd = ad.isClassDeclaration();
         Dsymbol parentsave = ad.parent;
@@ -561,11 +598,11 @@ public:
         ad.parent = parentsave;
     }
 
-    void visit(TemplateInstance ti)
+    override void visit(TemplateInstance ti)
     {
         version (none)
         {
-            printf("TemplateInstance::mangle() %p %s", ti, ti.toChars());
+            printf("TemplateInstance.mangle() %p %s", ti, ti.toChars());
             if (ti.parent)
                 printf("  parent = %s %s", ti.parent.kind(), ti.parent.toChars());
             printf("\n");
@@ -577,31 +614,31 @@ public:
         ti.getIdent();
         const(char)* id = ti.ident ? ti.ident.toChars() : ti.toChars();
         toBuffer(id, ti);
-        //printf("TemplateInstance::mangle() %s = %s\n", ti->toChars(), ti->id);
+        //printf("TemplateInstance.mangle() %s = %s\n", ti.toChars(), ti.id);
     }
 
-    void visit(Dsymbol s)
+    override void visit(Dsymbol s)
     {
         version (none)
         {
-            printf("Dsymbol::mangle() '%s'", s.toChars());
+            printf("Dsymbol.mangle() '%s'", s.toChars());
             if (s.parent)
                 printf("  parent = %s %s", s.parent.kind(), s.parent.toChars());
             printf("\n");
         }
         mangleParent(s);
-        char* id = s.ident ? s.ident.toChars() : s.toChars();
+        auto id = s.ident ? s.ident.toChars() : s.toChars();
         toBuffer(id, s);
-        //printf("Dsymbol::mangle() %s = %s\n", s->toChars(), id);
+        //printf("Dsymbol.mangle() %s = %s\n", s.toChars(), id);
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    void visit(Expression e)
+    override void visit(Expression e)
     {
         e.error("expression %s is not a valid template value argument", e.toChars());
     }
 
-    void visit(IntegerExp e)
+    override void visit(IntegerExp e)
     {
         if (cast(sinteger_t)e.value < 0)
             buf.printf("N%lld", -e.value);
@@ -609,7 +646,7 @@ public:
             buf.printf("i%lld", e.value);
     }
 
-    void visit(RealExp e)
+    override void visit(RealExp e)
     {
         buf.writeByte('e');
         realToMangleBuffer(e.value);
@@ -635,7 +672,7 @@ public:
         {
             const(size_t) BUFFER_LEN = 36;
             char[BUFFER_LEN] buffer;
-            size_t n = ld_sprint(buffer.ptr, 'A', value);
+            size_t n = Port.ld_sprint(buffer.ptr, 'A', value);
             assert(n < BUFFER_LEN);
             for (size_t i = 0; i < n; i++)
             {
@@ -651,8 +688,8 @@ public:
                     break;
                 case '0':
                     if (i < 2)
-                        break;
-                    // skip leading 0X
+                        break; // skip leading 0X
+                    goto default;
                 default:
                     buf.writeByte(c);
                     break;
@@ -661,7 +698,7 @@ public:
         }
     }
 
-    void visit(ComplexExp e)
+    override void visit(ComplexExp e)
     {
         buf.writeByte('c');
         realToMangleBuffer(e.toReal());
@@ -669,39 +706,36 @@ public:
         realToMangleBuffer(e.toImaginary());
     }
 
-    void visit(NullExp e)
+    override void visit(NullExp e)
     {
         buf.writeByte('n');
     }
 
-    void visit(StringExp e)
+    override void visit(StringExp e)
     {
         char m;
         OutBuffer tmp;
-        char* q;
-        size_t qlen;
+        const(char)[] q;
         /* Write string in UTF-8 format
          */
         switch (e.sz)
         {
         case 1:
             m = 'a';
-            q = cast(char*)e.string;
-            qlen = e.len;
+            q = e.string[0 .. e.len];
             break;
         case 2:
             m = 'w';
             for (size_t u = 0; u < e.len;)
             {
-                uint c;
-                const(char)* p = utf_decodeWchar(cast(ushort*)e.string, e.len, &u, &c);
+                dchar c;
+                const p = utf_decodeWchar(e.wstring, e.len, u, c);
                 if (p)
                     e.error("%s", p);
                 else
                     tmp.writeUTF8(c);
             }
-            q = cast(char*)tmp.data;
-            qlen = tmp.offset;
+            q = tmp.peekSlice();
             break;
         case 4:
             m = 'd';
@@ -713,39 +747,39 @@ public:
                 else
                     tmp.writeUTF8(c);
             }
-            q = cast(char*)tmp.data;
-            qlen = tmp.offset;
+            q = tmp.peekSlice();
             break;
         default:
             assert(0);
         }
-        buf.reserve(1 + 11 + 2 * qlen);
+        buf.reserve(1 + 11 + 2 * q.length);
         buf.writeByte(m);
-        buf.printf("%d_", cast(int)qlen); // nbytes <= 11
-        for (char* p = cast(char*)buf.data + buf.offset, pend = p + 2 * qlen; p < pend; p += 2, ++q)
+        buf.printf("%d_", cast(int)q.length); // nbytes <= 11
+        size_t qi = 0;
+        for (char* p = cast(char*)buf.data + buf.offset, pend = p + 2 * q.length; p < pend; p += 2, ++qi)
         {
-            char hi = *q >> 4 & 0xF;
+            char hi = (q[qi] >> 4) & 0xF;
             p[0] = cast(char)(hi < 10 ? hi + '0' : hi - 10 + 'a');
-            char lo = *q & 0xF;
+            char lo = q[qi] & 0xF;
             p[1] = cast(char)(lo < 10 ? lo + '0' : lo - 10 + 'a');
         }
-        buf.offset += 2 * qlen;
+        buf.offset += 2 * q.length;
     }
 
-    void visit(ArrayLiteralExp e)
+    override void visit(ArrayLiteralExp e)
     {
         size_t dim = e.elements ? e.elements.dim : 0;
-        buf.printf("A%u", dim);
+        buf.printf("A%u", cast(uint)dim);
         for (size_t i = 0; i < dim; i++)
         {
-            (*e.elements)[i].accept(this);
+            e.getElement(i).accept(this);
         }
     }
 
-    void visit(AssocArrayLiteralExp e)
+    override void visit(AssocArrayLiteralExp e)
     {
         size_t dim = e.keys.dim;
-        buf.printf("A%u", dim);
+        buf.printf("A%u", cast(uint)dim);
         for (size_t i = 0; i < dim; i++)
         {
             (*e.keys)[i].accept(this);
@@ -753,10 +787,10 @@ public:
         }
     }
 
-    void visit(StructLiteralExp e)
+    override void visit(StructLiteralExp e)
     {
         size_t dim = e.elements ? e.elements.dim : 0;
-        buf.printf("S%u", dim);
+        buf.printf("S%u", cast(uint)dim);
         for (size_t i = 0; i < dim; i++)
         {
             Expression ex = (*e.elements)[i];
@@ -770,17 +804,18 @@ public:
     ////////////////////////////////////////////////////////////////////////////
     void paramsToDecoBuffer(Parameters* parameters)
     {
-        //printf("Parameter::paramsToDecoBuffer()\n");
-        Parameter._foreach(parameters, &paramsToDecoBufferDg, cast(void*)this);
+        //printf("Parameter.paramsToDecoBuffer()\n");
+
+        int paramsToDecoBufferDg(size_t n, Parameter p)
+        {
+            p.accept(this);
+            return 0;
+        }
+
+        Parameter._foreach(parameters, &paramsToDecoBufferDg);
     }
 
-    static int paramsToDecoBufferDg(void* ctx, size_t n, Parameter p)
-    {
-        p.accept(cast(Visitor)ctx);
-        return 0;
-    }
-
-    void visit(Parameter p)
+    override void visit(Parameter p)
     {
         if (p.storageClass & STCscope)
             buf.writeByte('M');
@@ -805,7 +840,6 @@ public:
             debug
             {
                 printf("storageClass = x%llx\n", p.storageClass & (STCin | STCout | STCref | STClazy));
-                halt();
             }
             assert(0);
         }
@@ -813,13 +847,6 @@ public:
     }
 }
 
-extern (C++) const(char)* mangle(Dsymbol s)
-{
-    OutBuffer buf;
-    scope Mangler v = new Mangler(&buf);
-    s.accept(v);
-    return buf.extractString();
-}
 
 /******************************************************************************
  * Returns exact mangled name of function.
@@ -838,22 +865,13 @@ extern (C++) const(char)* mangleExact(FuncDeclaration fd)
 
 extern (C++) void mangleToBuffer(Type t, OutBuffer* buf)
 {
-    scope Mangler v = new Mangler(buf);
-    v.visitWithMask(t, 0);
-}
-
-extern (C++) void mangleToBuffer(Type t, OutBuffer* buf, bool internal)
-{
-    if (internal)
-    {
-        buf.writestring(mangleChar[t.ty]);
-        if (t.ty == Tarray)
-            buf.writestring(mangleChar[(cast(TypeArray)t).next.ty]);
-    }
-    else if (t.deco)
+    if (t.deco)
         buf.writestring(t.deco);
     else
-        mangleToBuffer(t, buf);
+    {
+        scope Mangler v = new Mangler(buf);
+        v.visitWithMask(t, 0);
+    }
 }
 
 extern (C++) void mangleToBuffer(Expression e, OutBuffer* buf)
@@ -861,3 +879,10 @@ extern (C++) void mangleToBuffer(Expression e, OutBuffer* buf)
     scope Mangler v = new Mangler(buf);
     e.accept(v);
 }
+
+extern (C++) void mangleToBuffer(Dsymbol s, OutBuffer* buf)
+{
+    scope Mangler v = new Mangler(buf);
+    s.accept(v);
+}
+

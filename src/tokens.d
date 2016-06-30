@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -12,9 +12,8 @@ import core.stdc.ctype;
 import core.stdc.stdio;
 import core.stdc.string;
 import ddmd.globals;
-import ddmd.id;
 import ddmd.identifier;
-import ddmd.root.longdouble;
+import ddmd.root.port;
 import ddmd.root.outbuffer;
 import ddmd.root.rmem;
 import ddmd.utf;
@@ -22,6 +21,7 @@ import ddmd.utf;
 enum TOK : int
 {
     TOKreserved,
+
     // Other
     TOKlparen,
     TOKrparen,
@@ -50,8 +50,8 @@ enum TOK : int
     TOKsymoff,
     TOKvar,
     TOKdotvar,
+    TOKdotid,
     TOKdotti,
-    TOKdotexp,
     TOKdottype,
     TOKslice,
     TOKarraylength,
@@ -76,6 +76,7 @@ enum TOK : int
     TOKthrownexception,
     TOKdelegateptr,
     TOKdelegatefuncptr,
+
     // 54
     // Operators
     TOKlt,
@@ -88,8 +89,8 @@ enum TOK : int
     TOKnotidentity,
     TOKindex,
     TOKis,
-    TOKtobool,
-    // 65
+
+    // 64
     // NCEG floating point compares
     // !<>=     <>    <>=    !>     !>=   !<     !<=   !<>
     TOKunord,
@@ -100,7 +101,8 @@ enum TOK : int
     TOKuge,
     TOKug,
     TOKue,
-    // 73
+
+    // 72
     TOKshl,
     TOKshr,
     TOKshlass,
@@ -140,7 +142,8 @@ enum TOK : int
     TOKoror,
     TOKpreplusplus,
     TOKpreminusminus,
-    // 112
+
+    // 111
     // Numeric literals
     TOKint32v,
     TOKuns32v,
@@ -154,10 +157,12 @@ enum TOK : int
     TOKimaginary32v,
     TOKimaginary64v,
     TOKimaginary80v,
+
     // Char constants
     TOKcharv,
     TOKwcharv,
     TOKdcharv,
+
     // Leaf operators
     TOKidentifier,
     TOKstring,
@@ -167,6 +172,7 @@ enum TOK : int
     TOKhalt,
     TOKtuple,
     TOKerror,
+
     // Basic types
     TOKvoid,
     TOKint8,
@@ -192,7 +198,8 @@ enum TOK : int
     TOKwchar,
     TOKdchar,
     TOKbool,
-    // 159
+
+    // 158
     // Aggregates
     TOKstruct,
     TOKclass,
@@ -200,7 +207,6 @@ enum TOK : int
     TOKunion,
     TOKenum,
     TOKimport,
-    TOKtypedef,
     TOKalias,
     TOKoverride,
     TOKdelegate,
@@ -216,7 +222,6 @@ enum TOK : int
     TOKfinal,
     TOKconst,
     TOKabstract,
-    TOKvolatile,
     TOKdebug,
     TOKdeprecated,
     TOKin,
@@ -227,6 +232,7 @@ enum TOK : int
     TOKpackage,
     TOKmanifest,
     TOKimmutable,
+
     // Statements
     TOKif,
     TOKelse,
@@ -252,15 +258,19 @@ enum TOK : int
     TOKon_scope_exit,
     TOKon_scope_failure,
     TOKon_scope_success,
+
     // Contracts
     TOKbody,
     TOKinvariant,
+
     // Testing
     TOKunittest,
+
     // Added after 1.0
     TOKargTypes,
     TOKref,
     TOKmacro,
+
     TOKparameters,
     TOKtraits,
     TOKoverloadset,
@@ -279,9 +289,11 @@ enum TOK : int
     TOKgoesto,
     TOKvector,
     TOKpound,
+
     TOKinterval,
     TOKvoidexp,
     TOKcantexp,
+
     TOKMAX,
 }
 
@@ -313,8 +325,8 @@ alias TOKstar = TOK.TOKstar;
 alias TOKsymoff = TOK.TOKsymoff;
 alias TOKvar = TOK.TOKvar;
 alias TOKdotvar = TOK.TOKdotvar;
+alias TOKdotid = TOK.TOKdotid;
 alias TOKdotti = TOK.TOKdotti;
-alias TOKdotexp = TOK.TOKdotexp;
 alias TOKdottype = TOK.TOKdottype;
 alias TOKslice = TOK.TOKslice;
 alias TOKarraylength = TOK.TOKarraylength;
@@ -349,7 +361,6 @@ alias TOKidentity = TOK.TOKidentity;
 alias TOKnotidentity = TOK.TOKnotidentity;
 alias TOKindex = TOK.TOKindex;
 alias TOKis = TOK.TOKis;
-alias TOKtobool = TOK.TOKtobool;
 alias TOKunord = TOK.TOKunord;
 alias TOKlg = TOK.TOKlg;
 alias TOKleg = TOK.TOKleg;
@@ -450,7 +461,6 @@ alias TOKinterface = TOK.TOKinterface;
 alias TOKunion = TOK.TOKunion;
 alias TOKenum = TOK.TOKenum;
 alias TOKimport = TOK.TOKimport;
-alias TOKtypedef = TOK.TOKtypedef;
 alias TOKalias = TOK.TOKalias;
 alias TOKoverride = TOK.TOKoverride;
 alias TOKdelegate = TOK.TOKdelegate;
@@ -466,7 +476,6 @@ alias TOKstatic = TOK.TOKstatic;
 alias TOKfinal = TOK.TOKfinal;
 alias TOKconst = TOK.TOKconst;
 alias TOKabstract = TOK.TOKabstract;
-alias TOKvolatile = TOK.TOKvolatile;
 alias TOKdebug = TOK.TOKdebug;
 alias TOKdeprecated = TOK.TOKdeprecated;
 alias TOKin = TOK.TOKin;
@@ -532,7 +541,9 @@ alias TOKMAX = TOK.TOKMAX;
 
 enum TOKwild = TOKinout;
 
-struct Token
+/***********************************************************
+ */
+extern (C++) struct Token
 {
     Token* next;
     Loc loc;
@@ -551,7 +562,7 @@ struct Token
 
         struct
         {
-            char* ustring; // UTF8 string
+            const(char)* ustring; // UTF8 string
             uint len;
             ubyte postfix; // 'c', 'w', 'd'
         }
@@ -559,131 +570,131 @@ struct Token
         Identifier ident;
     }
 
-    extern (C++) static __gshared const(char)*[TOKMAX] tochars;
+    extern (D) private __gshared string[TOKMAX] tochars =
+    [
+        TOKeof: "EOF",
+        TOKlcurly: "{",
+        TOKrcurly: "}",
+        TOKlparen: "(",
+        TOKrparen: ")",
+        TOKlbracket: "[",
+        TOKrbracket: "]",
+        TOKsemicolon: ";",
+        TOKcolon: ":",
+        TOKcomma: ",",
+        TOKdot: ".",
+        TOKxor: "^",
+        TOKxorass: "^=",
+        TOKassign: "=",
+        TOKconstruct: "=",
+        TOKblit: "=",
+        TOKlt: "<",
+        TOKgt: ">",
+        TOKle: "<=",
+        TOKge: ">=",
+        TOKequal: "==",
+        TOKnotequal: "!=",
+        TOKunord: "!<>=",
+        TOKue: "!<>",
+        TOKlg: "<>",
+        TOKleg: "<>=",
+        TOKule: "!>",
+        TOKul: "!>=",
+        TOKuge: "!<",
+        TOKug: "!<=",
+        TOKnot: "!",
+        TOKshl: "<<",
+        TOKshr: ">>",
+        TOKushr: ">>>",
+        TOKadd: "+",
+        TOKmin: "-",
+        TOKmul: "*",
+        TOKdiv: "/",
+        TOKmod: "%",
+        TOKslice: "..",
+        TOKdotdotdot: "...",
+        TOKand: "&",
+        TOKandand: "&&",
+        TOKor: "|",
+        TOKoror: "||",
+        TOKarray: "[]",
+        TOKindex: "[i]",
+        TOKaddress: "&",
+        TOKstar: "*",
+        TOKtilde: "~",
+        TOKdollar: "$",
+        TOKcast: "cast",
+        TOKplusplus: "++",
+        TOKminusminus: "--",
+        TOKpreplusplus: "++",
+        TOKpreminusminus: "--",
+        TOKtype: "type",
+        TOKquestion: "?",
+        TOKneg: "-",
+        TOKuadd: "+",
+        TOKvar: "var",
+        TOKaddass: "+=",
+        TOKminass: "-=",
+        TOKmulass: "*=",
+        TOKdivass: "/=",
+        TOKmodass: "%=",
+        TOKshlass: "<<=",
+        TOKshrass: ">>=",
+        TOKushrass: ">>>=",
+        TOKandass: "&=",
+        TOKorass: "|=",
+        TOKcatass: "~=",
+        TOKcat: "~",
+        TOKcall: "call",
+        TOKidentity: "is",
+        TOKnotidentity: "!is",
+        TOKidentifier: "identifier",
+        TOKat: "@",
+        TOKpow: "^^",
+        TOKpowass: "^^=",
+        TOKgoesto: "=>",
+        TOKpound: "#",
 
-    extern (C++) static void initTokens()
+        // For debugging
+        TOKerror: "error",
+        TOKdotid: "dotid",
+        TOKdottd: "dottd",
+        TOKdotti: "dotti",
+        TOKdotvar: "dotvar",
+        TOKdottype: "dottype",
+        TOKsymoff: "symoff",
+        TOKarraylength: "arraylength",
+        TOKarrayliteral: "arrayliteral",
+        TOKassocarrayliteral: "assocarrayliteral",
+        TOKstructliteral: "structliteral",
+        TOKstring: "string",
+        TOKdsymbol: "symbol",
+        TOKtuple: "tuple",
+        TOKdeclaration: "declaration",
+        TOKon_scope_exit: "scope(exit)",
+        TOKon_scope_success: "scope(success)",
+        TOKon_scope_failure: "scope(failure)",
+        TOKdelegateptr: "delegateptr",
+    ];
+
+    static this()
     {
-        for (nkeywords = 0; keywords[nkeywords].name; nkeywords++)
+        Identifier.initTable();
+        foreach (kw; keywords)
         {
             //printf("keyword[%d] = '%s'\n",u, keywords[u].name);
-            const(char)* s = keywords[nkeywords].name;
-            TOK v = keywords[nkeywords].value;
-            Identifier id = Identifier.idPool(s);
-            id.value = v;
+            immutable(char)* s = kw.name;
+            TOK v = kw.value;
+            size_t len = strlen(s);
+            auto id = Identifier.idPool(s, len, v);
             //printf("tochars[%d] = '%s'\n",v, s);
-            Token.tochars[v] = s;
+            Token.tochars[v] = s[0 .. len];
         }
-        Token.tochars[TOKeof] = "EOF";
-        Token.tochars[TOKlcurly] = "{";
-        Token.tochars[TOKrcurly] = "}";
-        Token.tochars[TOKlparen] = "(";
-        Token.tochars[TOKrparen] = ")";
-        Token.tochars[TOKlbracket] = "[";
-        Token.tochars[TOKrbracket] = "]";
-        Token.tochars[TOKsemicolon] = ";";
-        Token.tochars[TOKcolon] = ":";
-        Token.tochars[TOKcomma] = ",";
-        Token.tochars[TOKdot] = ".";
-        Token.tochars[TOKxor] = "^";
-        Token.tochars[TOKxorass] = "^=";
-        Token.tochars[TOKassign] = "=";
-        Token.tochars[TOKconstruct] = "=";
-        Token.tochars[TOKblit] = "=";
-        Token.tochars[TOKlt] = "<";
-        Token.tochars[TOKgt] = ">";
-        Token.tochars[TOKle] = "<=";
-        Token.tochars[TOKge] = ">=";
-        Token.tochars[TOKequal] = "==";
-        Token.tochars[TOKnotequal] = "!=";
-        Token.tochars[TOKnotidentity] = "!is";
-        Token.tochars[TOKtobool] = "!!";
-        Token.tochars[TOKunord] = "!<>=";
-        Token.tochars[TOKue] = "!<>";
-        Token.tochars[TOKlg] = "<>";
-        Token.tochars[TOKleg] = "<>=";
-        Token.tochars[TOKule] = "!>";
-        Token.tochars[TOKul] = "!>=";
-        Token.tochars[TOKuge] = "!<";
-        Token.tochars[TOKug] = "!<=";
-        Token.tochars[TOKnot] = "!";
-        Token.tochars[TOKtobool] = "!!";
-        Token.tochars[TOKshl] = "<<";
-        Token.tochars[TOKshr] = ">>";
-        Token.tochars[TOKushr] = ">>>";
-        Token.tochars[TOKadd] = "+";
-        Token.tochars[TOKmin] = "-";
-        Token.tochars[TOKmul] = "*";
-        Token.tochars[TOKdiv] = "/";
-        Token.tochars[TOKmod] = "%";
-        Token.tochars[TOKslice] = "..";
-        Token.tochars[TOKdotdotdot] = "...";
-        Token.tochars[TOKand] = "&";
-        Token.tochars[TOKandand] = "&&";
-        Token.tochars[TOKor] = "|";
-        Token.tochars[TOKoror] = "||";
-        Token.tochars[TOKarray] = "[]";
-        Token.tochars[TOKindex] = "[i]";
-        Token.tochars[TOKaddress] = "&";
-        Token.tochars[TOKstar] = "*";
-        Token.tochars[TOKtilde] = "~";
-        Token.tochars[TOKdollar] = "$";
-        Token.tochars[TOKcast] = "cast";
-        Token.tochars[TOKplusplus] = "++";
-        Token.tochars[TOKminusminus] = "--";
-        Token.tochars[TOKpreplusplus] = "++";
-        Token.tochars[TOKpreminusminus] = "--";
-        Token.tochars[TOKtype] = "type";
-        Token.tochars[TOKquestion] = "?";
-        Token.tochars[TOKneg] = "-";
-        Token.tochars[TOKuadd] = "+";
-        Token.tochars[TOKvar] = "var";
-        Token.tochars[TOKaddass] = "+=";
-        Token.tochars[TOKminass] = "-=";
-        Token.tochars[TOKmulass] = "*=";
-        Token.tochars[TOKdivass] = "/=";
-        Token.tochars[TOKmodass] = "%=";
-        Token.tochars[TOKshlass] = "<<=";
-        Token.tochars[TOKshrass] = ">>=";
-        Token.tochars[TOKushrass] = ">>>=";
-        Token.tochars[TOKandass] = "&=";
-        Token.tochars[TOKorass] = "|=";
-        Token.tochars[TOKcatass] = "~=";
-        Token.tochars[TOKcat] = "~";
-        Token.tochars[TOKcall] = "call";
-        Token.tochars[TOKidentity] = "is";
-        Token.tochars[TOKnotidentity] = "!is";
-        Token.tochars[TOKorass] = "|=";
-        Token.tochars[TOKidentifier] = "identifier";
-        Token.tochars[TOKat] = "@";
-        Token.tochars[TOKpow] = "^^";
-        Token.tochars[TOKpowass] = "^^=";
-        Token.tochars[TOKgoesto] = "=>";
-        Token.tochars[TOKpound] = "#";
-        // For debugging
-        Token.tochars[TOKerror] = "error";
-        Token.tochars[TOKdotexp] = "dotexp";
-        Token.tochars[TOKdotti] = "dotti";
-        Token.tochars[TOKdotvar] = "dotvar";
-        Token.tochars[TOKdottype] = "dottype";
-        Token.tochars[TOKsymoff] = "symoff";
-        Token.tochars[TOKarraylength] = "arraylength";
-        Token.tochars[TOKarrayliteral] = "arrayliteral";
-        Token.tochars[TOKassocarrayliteral] = "assocarrayliteral";
-        Token.tochars[TOKstructliteral] = "structliteral";
-        Token.tochars[TOKstring] = "string";
-        Token.tochars[TOKdsymbol] = "symbol";
-        Token.tochars[TOKtuple] = "tuple";
-        Token.tochars[TOKdeclaration] = "declaration";
-        Token.tochars[TOKdottd] = "dottd";
-        Token.tochars[TOKon_scope_exit] = "scope(exit)";
-        Token.tochars[TOKon_scope_success] = "scope(success)";
-        Token.tochars[TOKon_scope_failure] = "scope(failure)";
     }
 
-    /************************* Token **********************************************/
-    extern (C++) static __gshared Token* freelist = null;
+    __gshared Token* freelist = null;
 
-    extern (C++) static Token* alloc()
+    static Token* alloc()
     {
         if (Token.freelist)
         {
@@ -695,17 +706,17 @@ struct Token
         return new Token();
     }
 
-    extern (C++) void free()
+    void free()
     {
         next = freelist;
         freelist = &this;
     }
 
-    extern (C++) int isKeyword()
+    int isKeyword() const
     {
-        foreach (size_t u; 0 .. nkeywords)
+        foreach (kw; keywords)
         {
-            if (keywords[u].value == value)
+            if (kw.value == value)
                 return 1;
         }
         return 0;
@@ -713,15 +724,51 @@ struct Token
 
     debug
     {
-        extern (C++) void print()
+        void print()
         {
             fprintf(stderr, "%s\n", toChars());
         }
     }
 
-    extern (C++) const(char)* toChars()
+    /****
+     * Set to contents of ptr[0..length]
+     * Params:
+     *  ptr = pointer to string
+     *  length = length of string
+     */
+    final void setString(const(char)* ptr, size_t length)
     {
-        static __gshared char[3 + 3 * float80value.sizeof + 1] buffer;
+        auto s = cast(char*)mem.xmalloc(length + 1);
+        memcpy(s, ptr, length);
+        s[length] = 0;
+        ustring = s;
+        len = cast(uint)length;
+        postfix = 0;
+    }
+
+    /****
+     * Set to contents of buf
+     * Params:
+     *  buf = string (not zero terminated)
+     */
+    final void setString(const ref OutBuffer buf)
+    {
+        setString(cast(const(char)*)buf.data, buf.offset);
+    }
+
+    /****
+     * Set to empty string
+     */
+    final void setString()
+    {
+        ustring = "";
+        len = 0;
+        postfix = 0;
+    }
+
+    extern (C++) const(char)* toChars() const
+    {
+        __gshared char[3 + 3 * float80value.sizeof + 1] buffer;
         const(char)* p = &buffer[0];
         switch (value)
         {
@@ -741,26 +788,26 @@ struct Token
             sprintf(&buffer[0], "%lluUL", cast(ulong)uns64value);
             break;
         case TOKfloat32v:
-            ld_sprint(&buffer[0], 'g', float80value);
+            Port.ld_sprint(&buffer[0], 'g', float80value);
             strcat(&buffer[0], "f");
             break;
         case TOKfloat64v:
-            ld_sprint(&buffer[0], 'g', float80value);
+            Port.ld_sprint(&buffer[0], 'g', float80value);
             break;
         case TOKfloat80v:
-            ld_sprint(&buffer[0], 'g', float80value);
+            Port.ld_sprint(&buffer[0], 'g', float80value);
             strcat(&buffer[0], "L");
             break;
         case TOKimaginary32v:
-            ld_sprint(&buffer[0], 'g', float80value);
+            Port.ld_sprint(&buffer[0], 'g', float80value);
             strcat(&buffer[0], "fi");
             break;
         case TOKimaginary64v:
-            ld_sprint(&buffer[0], 'g', float80value);
+            Port.ld_sprint(&buffer[0], 'g', float80value);
             strcat(&buffer[0], "i");
             break;
         case TOKimaginary80v:
-            ld_sprint(&buffer[0], 'g', float80value);
+            Port.ld_sprint(&buffer[0], 'g', float80value);
             strcat(&buffer[0], "Li");
             break;
         case TOKstring:
@@ -769,8 +816,8 @@ struct Token
                 buf.writeByte('"');
                 for (size_t i = 0; i < len;)
                 {
-                    uint c;
-                    utf_decodeChar(cast(char*)ustring, len, &i, &c);
+                    dchar c;
+                    utf_decodeChar(ustring, len, i, c);
                     switch (c)
                     {
                     case 0:
@@ -778,6 +825,7 @@ struct Token
                     case '"':
                     case '\\':
                         buf.writeByte('\\');
+                        goto default;
                     default:
                         if (c <= 0x7F)
                         {
@@ -815,7 +863,7 @@ struct Token
                 if (postfix)
                     buf.writeByte(postfix);
                 buf.writeByte(0);
-                p = cast(char*)buf.extractData();
+                p = buf.extractData();
                 break;
             }
         case TOKidentifier:
@@ -855,16 +903,21 @@ struct Token
         return p;
     }
 
-    extern (C++) static const(char)* toChars(TOK value)
+    static const(char)* toChars(TOK value)
     {
-        static __gshared char[3 + 3 * value.sizeof + 1] buffer;
-        const(char)* p = tochars[value];
-        if (!p)
+        return toString(value).ptr;
+    }
+
+    extern (D) static const(char)[] toString(TOK value)
+    {
+        __gshared char[3 + 3 * value.sizeof + 1] buffer;
+        auto s = tochars[value];
+        if (s.length == 0)
         {
-            sprintf(&buffer[0], "TOK%d", value);
-            p = &buffer[0];
+            int len =  sprintf(&buffer[0], "TOK%d", value);
+            return buffer[0 .. len];
         }
-        return p;
+        return s;
     }
 }
 
@@ -872,12 +925,11 @@ struct Token
  */
 struct Keyword
 {
-    const(char)* name;
+    immutable(char)* name;
     TOK value;
 }
 
-extern (C++) __gshared size_t nkeywords;
-extern (C++) __gshared Keyword* keywords =
+immutable Keyword[] keywords =
 [
     Keyword("this", TOKthis),
     Keyword("super", TOKsuper),
@@ -952,11 +1004,9 @@ extern (C++) __gshared Keyword* keywords =
     Keyword("static", TOKstatic),
     Keyword("final", TOKfinal),
     Keyword("const", TOKconst),
-    Keyword("typedef", TOKtypedef),
     Keyword("alias", TOKalias),
     Keyword("override", TOKoverride),
     Keyword("abstract", TOKabstract),
-    Keyword("volatile", TOKvolatile),
     Keyword("debug", TOKdebug),
     Keyword("deprecated", TOKdeprecated),
     Keyword("in", TOKin),
@@ -992,5 +1042,4 @@ extern (C++) __gshared Keyword* keywords =
     Keyword("__PRETTY_FUNCTION__", TOKprettyfunc),
     Keyword("shared", TOKshared),
     Keyword("immutable", TOKimmutable),
-    Keyword(null, TOKreserved)
 ];

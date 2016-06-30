@@ -1,12 +1,12 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2014 by Digital Mars
+ * Copyright (c) 1999-2016 by Digital Mars
  * All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/D-Programming-Language/dmd/blob/master/src/enum.h
+ * https://github.com/dlang/dmd/blob/master/src/enum.h
  */
 
 #ifndef DMD_ENUM_H
@@ -18,6 +18,7 @@
 
 #include "root.h"
 #include "dsymbol.h"
+#include "declaration.h"
 #include "tokens.h"
 
 class Identifier;
@@ -48,7 +49,6 @@ public:
     bool added;
     int inuse;
 
-    EnumDeclaration(Loc loc, Identifier *id, Type *memtype);
     Dsymbol *syntaxCopy(Dsymbol *s);
     void addMember(Scope *sc, ScopeDsymbol *sds);
     void setScope(Scope *sc);
@@ -56,7 +56,7 @@ public:
     bool oneMember(Dsymbol **ps, Identifier *ident);
     Type *getType();
     const char *kind();
-    Dsymbol *search(Loc, Identifier *ident, int flags = IgnoreNone);
+    Dsymbol *search(Loc, Identifier *ident, int flags = SearchLocalsOnly);
     bool isDeprecated();                // is Dsymbol deprecated?
     Prot prot();
     Expression *getMaxMinValue(Loc loc, Identifier *id);
@@ -70,7 +70,7 @@ public:
 };
 
 
-class EnumMember : public Dsymbol
+class EnumMember : public VarDeclaration
 {
 public:
     /* Can take the following forms:
@@ -78,17 +78,16 @@ public:
      *  2. id = value
      *  3. type id = value
      */
-    Expression *value;
+    Expression *&value();
+
     // A cast() is injected to 'value' after semantic(),
     // but 'origValue' will preserve the original value,
     // or previous value + 1 if none was specified.
     Expression *origValue;
-    Type *type;
+    Type *origType;
 
     EnumDeclaration *ed;
-    VarDeclaration *vd;
 
-    EnumMember(Loc loc, Identifier *id, Expression *value, Type *type);
     Dsymbol *syntaxCopy(Dsymbol *s);
     const char *kind();
     void semantic(Scope *sc);

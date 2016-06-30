@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -10,19 +10,17 @@ module ddmd.link;
 
 import core.stdc.ctype;
 import core.stdc.stdio;
-import core.stdc.stdlib;
 import core.stdc.string;
 import core.sys.posix.stdio;
 import core.sys.posix.stdlib;
-import core.sys.posix.sys.wait;
 import core.sys.posix.unistd;
 import ddmd.errors;
 import ddmd.globals;
-import ddmd.mars;
 import ddmd.root.file;
 import ddmd.root.filename;
 import ddmd.root.outbuffer;
 import ddmd.root.rmem;
+import ddmd.utils;
 
 version (Posix) extern (C) int pipe(int*);
 version (Windows) extern (C) int putenv(const char*);
@@ -31,26 +29,17 @@ version (Windows) extern (C) int spawnl(int, const char*, const char*, const cha
 version (Windows) extern (C) int spawnv(int, const char*, const char**);
 version (CRuntime_Microsoft) extern (Windows) uint GetShortPathNameA(const char* lpszLongPath, char* lpszShortPath, uint cchBuffer);
 
-static if (__linux__ || __APPLE__)
-{
-    enum HAS_POSIX_SPAWN = 1;
-}
-else
-{
-    enum HAS_POSIX_SPAWN = 0;
-}
-
 /****************************************
  * Write filename to cmdbuf, quoting if necessary.
  */
-extern (C++) void writeFilename(OutBuffer* buf, const(char)* filename, size_t len)
+private void writeFilename(OutBuffer* buf, const(char)* filename, size_t len)
 {
     /* Loop and see if we need to quote
      */
     for (size_t i = 0; i < len; i++)
     {
         char c = filename[i];
-        if (isalnum(cast(char)c) || c == '_')
+        if (isalnum(c) || c == '_')
             continue;
         /* Need to quote
          */
@@ -64,12 +53,12 @@ extern (C++) void writeFilename(OutBuffer* buf, const(char)* filename, size_t le
     buf.write(filename, len);
 }
 
-extern (C++) void writeFilename(OutBuffer* buf, const(char)* filename)
+private void writeFilename(OutBuffer* buf, const(char)* filename)
 {
     writeFilename(buf, filename, strlen(filename));
 }
 
-static if (__linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __sun)
+version (Posix)
 {
     /*****************************
      * As it forwards the linker error message to stderr, checks for the presence
@@ -80,7 +69,7 @@ static if (__linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __sun)
      *     -1 if there is an IO error
      *      0 otherwise
      */
-    extern (C++) int findNoMainError(int fd)
+    private int findNoMainError(int fd)
     {
         version (OSX)
         {
@@ -126,7 +115,7 @@ static if (__linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __sun)
 /*****************************
  * Run the linker.  Return status of execution.
  */
-extern (C++) int runLINK()
+public int runLINK()
 {
     version (Windows)
     {
@@ -303,7 +292,7 @@ extern (C++) int runLINK()
                     linkcmd = linkcmdbuf.extractString();
                 }
                 else
-                    linkcmd = "link";
+                    linkcmd = "optlink";
             }
             int status = executecmd(linkcmd, p);
             if (lnkfilename)
@@ -439,7 +428,7 @@ extern (C++) int runLINK()
             return status;
         }
     }
-    else static if (__linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __sun)
+    else version (Posix)
     {
         pid_t childpid;
         int status;
@@ -447,7 +436,7 @@ extern (C++) int runLINK()
         Strings argv;
         const(char)* cc = getenv("CC");
         if (!cc)
-            cc = "gcc";
+            cc = "cc";
         argv.push(cc);
         argv.insert(1, global.params.objfiles);
         version (OSX)
@@ -457,7 +446,7 @@ extern (C++) int runLINK()
             if (global.params.dll)
                 argv.push("-dynamiclib");
         }
-        else static if (__linux__ || __FreeBSD__ || __OpenBSD__ || __sun)
+        else version (Posix)
         {
             if (global.params.dll)
                 argv.push("-shared");
@@ -533,6 +522,27 @@ extern (C++) int runLINK()
             argv.push("-m64");
         else
             argv.push("-m32");
+        version (OSX)
+        {
+            /* Without this switch, ld generates messages of the form:
+             * ld: warning: could not create compact unwind for __Dmain: offset of saved registers too far to encode
+             * meaning they are further than 255 bytes from the frame register.
+             * ld reverts to the old method instead.
+             * See: https://ghc.haskell.org/trac/ghc/ticket/5019
+             * which gives this tidbit:
+             * "When a C++ (or x86_64 Objective-C) exception is thrown, the runtime must unwind the
+             *  stack looking for some function to catch the exception.  Traditionally, the unwind
+             *  information is stored in the __TEXT/__eh_frame section of each executable as Dwarf
+             *  CFI (call frame information).  Beginning in Mac OS X 10.6, the unwind information is
+             *  also encoded in the __TEXT/__unwind_info section using a two-level lookup table of
+             *  compact unwind encodings.
+             *  The unwinddump tool displays the content of the __TEXT/__unwind_info section."
+             *
+             * A better fix would be to save the registers next to the frame pointer.
+             */
+            argv.push("-Xlinker");
+            argv.push("-no_compact_unwind");
+        }
         if (global.params.map || global.params.mapfile)
         {
             argv.push("-Xlinker");
@@ -622,22 +632,44 @@ extern (C++) int runLINK()
         {
             char* buf = cast(char*)malloc(3 + slen + 1);
             strcpy(buf, "-l");
-            /* Use "-l:libname.a" if the library name is complete
-             */
-            if (slen > 3 + 2 && memcmp(libname, cast(char*)"lib", 3) == 0 && (memcmp(libname + slen - 2, cast(char*)".a", 2) == 0 || memcmp(libname + slen - 3, cast(char*)".so", 3) == 0))
+
+            if (slen > 3 + 2 && memcmp(libname, "lib".ptr, 3) == 0)
             {
-                strcat(buf, ":");
+                if (memcmp(libname + slen - 2, ".a".ptr, 2) == 0)
+                {
+                    argv.push("-Xlinker");
+                    argv.push("-Bstatic");
+                    strncat(buf, libname + 3, slen - 3 - 2);
+                    argv.push(buf);
+                    argv.push("-Xlinker");
+                    argv.push("-Bdynamic");
+                }
+                else if (memcmp(libname + slen - 3, ".so".ptr, 3) == 0)
+                {
+                    strncat(buf, libname + 3, slen - 3 - 3);
+                    argv.push(buf);
+                }
+                else
+                {
+                    strcat(buf, libname);
+                    argv.push(buf);
+                }
             }
-            strcat(buf, libname);
-            argv.push(buf); // turns into /usr/lib/libphobos2.a
+            else
+            {
+                strcat(buf, libname);
+                argv.push(buf);
+            }
         }
-        //    argv.push("-ldruntime");
+        //argv.push("-ldruntime");
         argv.push("-lpthread");
         argv.push("-lm");
         version (linux)
         {
             // Changes in ld for Ubuntu 11.10 require this to appear after phobos2
             argv.push("-lrt");
+            // Link against libdl for phobos usage of dlopen
+            argv.push("-ldl");
         }
         if (global.params.verbose)
         {
@@ -704,17 +736,6 @@ extern (C++) int runLINK()
     }
 }
 
-/**********************************
- * Delete generated EXE file.
- */
-extern (C++) void deleteExeFile()
-{
-    if (global.params.exefile)
-    {
-        //printf("deleteExeFile() %s\n", global.params.exefile);
-        remove(global.params.exefile);
-    }
-}
 
 /******************************
  * Execute a rule.  Return the status.
@@ -723,7 +744,7 @@ extern (C++) void deleteExeFile()
  */
 version (Windows)
 {
-    extern (C++) int executecmd(const(char)* cmd, const(char)* args)
+    private int executecmd(const(char)* cmd, const(char)* args)
     {
         int status;
         size_t len;
@@ -766,8 +787,8 @@ version (Windows)
             // spawnlp returns intptr_t in some systems, not int
             status = spawnlp(0, cmd, cmd, args, null);
         }
-        //    if (global.params.verbose)
-        //      fprintf(global.stdmsg, "\n");
+        //if (global.params.verbose)
+        //    fprintf(global.stdmsg, "\n");
         if (status)
         {
             if (status == -1)
@@ -788,7 +809,7 @@ version (Windows)
  */
 version (Windows)
 {
-    extern (C++) int executearg0(const(char)* cmd, const(char)* args)
+    private int executearg0(const(char)* cmd, const(char)* args)
     {
         const(char)* file;
         const(char)* argv0 = global.params.argv0;
@@ -807,7 +828,7 @@ version (Windows)
  * Run the compiled program.
  * Return exit status.
  */
-extern (C++) int runProgram()
+public int runProgram()
 {
     //printf("runProgram()\n");
     if (global.params.verbose)
@@ -846,7 +867,7 @@ extern (C++) int runProgram()
         // spawnlp returns intptr_t in some systems, not int
         return spawnv(0, ex, argv.tdata());
     }
-    else static if (__linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __sun)
+    else version (Posix)
     {
         pid_t childpid;
         int status;
@@ -887,7 +908,7 @@ version (Windows)
     /*****************************
      * Detect whether the link will grab libraries from VS 2015 or later
      */
-    extern (C++) bool detectVS14(const(char)* cmdline)
+    private bool detectVS14(const(char)* cmdline)
     {
         auto libpaths = new Strings();
         // grab library folders passed on the command line

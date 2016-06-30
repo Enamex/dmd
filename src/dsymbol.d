@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -11,17 +11,18 @@ module ddmd.dsymbol;
 import core.stdc.stdarg;
 import core.stdc.stdio;
 import core.stdc.string;
+import core.stdc.stdlib;
+
 import ddmd.aggregate;
 import ddmd.aliasthis;
 import ddmd.arraytypes;
 import ddmd.attrib;
-import ddmd.backend;
+import ddmd.gluelayer;
 import ddmd.dclass;
 import ddmd.declaration;
 import ddmd.denum;
 import ddmd.dimport;
 import ddmd.dmodule;
-import ddmd.doc;
 import ddmd.dscope;
 import ddmd.dstruct;
 import ddmd.dtemplate;
@@ -29,7 +30,6 @@ import ddmd.errors;
 import ddmd.expression;
 import ddmd.func;
 import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.id;
 import ddmd.identifier;
 import ddmd.init;
@@ -38,11 +38,9 @@ import ddmd.mtype;
 import ddmd.nspace;
 import ddmd.opover;
 import ddmd.root.aav;
-import ddmd.root.outbuffer;
 import ddmd.root.rmem;
 import ddmd.root.rootobject;
 import ddmd.root.speller;
-import ddmd.root.stringtable;
 import ddmd.statement;
 import ddmd.tokens;
 import ddmd.visitor;
@@ -65,7 +63,7 @@ struct Ungag
 enum PROTKIND : int
 {
     PROTundefined,
-    PROTnone, // no access
+    PROTnone,           // no access
     PROTprivate,
     PROTpackage,
     PROTprotected,
@@ -89,14 +87,15 @@ struct Prot
     extern (D) this(PROTKIND kind)
     {
         this.kind = kind;
-        this.pkg = null;
     }
+
+    extern (C++):
 
     /**
      * Checks if `this` is superset of `other` restrictions.
      * For example, "protected" is more restrictive than "public".
      */
-    extern (C++) bool isMoreRestrictiveThan(Prot other)
+    bool isMoreRestrictiveThan(const Prot other) const
     {
         return this.kind < other.kind;
     }
@@ -104,7 +103,7 @@ struct Prot
     /**
      * Checks if `this` is absolutely identical protection attribute to `other`
      */
-    extern (C++) bool opEquals(Prot other)
+    bool opEquals(ref const Prot other) const
     {
         if (this.kind == other.kind)
         {
@@ -125,7 +124,7 @@ struct Prot
      *  'true' if parent is already more restrictive than this one and thus
      *  no differentiation is needed.
      */
-    extern (C++) bool isSubsetOf(Prot parent)
+    bool isSubsetOf(ref const Prot parent) const
     {
         if (this.kind != parent.kind)
             return false;
@@ -144,16 +143,16 @@ struct Prot
 
 enum PASS : int
 {
-    PASSinit, // initial state
-    PASSsemantic, // semantic() started
-    PASSsemanticdone, // semantic() done
-    PASSsemantic2, // semantic2() started
-    PASSsemantic2done, // semantic2() done
-    PASSsemantic3, // semantic3() started
-    PASSsemantic3done, // semantic3() done
-    PASSinline, // inline started
-    PASSinlinedone, // inline done
-    PASSobj, // toObjFile() run
+    PASSinit,           // initial state
+    PASSsemantic,       // semantic() started
+    PASSsemanticdone,   // semantic() done
+    PASSsemantic2,      // semantic2() started
+    PASSsemantic2done,  // semantic2() done
+    PASSsemantic3,      // semantic3() started
+    PASSsemantic3done,  // semantic3() done
+    PASSinline,         // inline started
+    PASSinlinedone,     // inline done
+    PASSobj,            // toObjFile() run
 }
 
 alias PASSinit = PASS.PASSinit;
@@ -167,79 +166,71 @@ alias PASSinline = PASS.PASSinline;
 alias PASSinlinedone = PASS.PASSinlinedone;
 alias PASSobj = PASS.PASSobj;
 
+// Search options
 enum : int
 {
-    IgnoreNone = 0x00, // default
-    IgnorePrivateMembers = 0x01, // don't find private members
-    IgnoreErrors = 0x02, // don't give error messages
-    IgnoreAmbiguous = 0x04, // return NULL if ambiguous
+    IgnoreNone              = 0x00, // default
+    IgnorePrivateImports    = 0x01, // don't search private imports
+    IgnoreErrors            = 0x02, // don't give error messages
+    IgnoreAmbiguous         = 0x04, // return NULL if ambiguous
+    SearchLocalsOnly        = 0x08, // only look at locals (don't search imports)
+    SearchImportsOnly       = 0x10, // only look in imports
+    SearchUnqualifiedModule = 0x20, // the module scope search is unqualified,
+                                    // meaning don't search imports in that scope,
+                                    // because qualified module searches search
+                                    // their imports
+    IgnoreSymbolVisibility  = 0x80, // also find private and package protected symbols
 }
 
 extern (C++) alias Dsymbol_apply_ft_t = int function(Dsymbol, void*);
 
+/***********************************************************
+ */
 extern (C++) class Dsymbol : RootObject
 {
-public:
     Identifier ident;
     Dsymbol parent;
-    Symbol* csym; // symbol for code generator
-    Symbol* isym; // import version of csym
-    const(char)* comment; // documentation comment for this Dsymbol
-    Loc loc; // where defined
-    Scope* _scope; // !=NULL means context to use for semantic()
-    bool errors; // this symbol failed to pass semantic()
+    Symbol* csym;           // symbol for code generator
+    Symbol* isym;           // import version of csym
+    const(char)* comment;   // documentation comment for this Dsymbol
+    Loc loc;                // where defined
+    Scope* _scope;          // !=null means context to use for semantic()
+    const(char)* prettystring;  // cached value of toPrettyChars()
+    bool errors;            // this symbol failed to pass semantic()
     PASS semanticRun;
-    char* depmsg; // customized deprecation message
-    UserAttributeDeclaration userAttribDecl; // user defined attributes
-    UnitTestDeclaration ddocUnittest; // !=NULL means there's a ddoc unittest associated with this symbol (only use this with ddoc)
 
-    /****************************** Dsymbol ******************************/
+    DeprecatedDeclaration depdecl;           // customized deprecation message
+    UserAttributeDeclaration userAttribDecl;    // user defined attributes
+
+    // !=null means there's a ddoc unittest associated with this symbol
+    // (only use this with ddoc)
+    UnitTestDeclaration ddocUnittest;
+
     final extern (D) this()
     {
         //printf("Dsymbol::Dsymbol(%p)\n", this);
-        this.ident = null;
-        this.parent = null;
-        this.csym = null;
-        this.isym = null;
-        this.loc = Loc();
-        this.comment = null;
-        this._scope = null;
         this.semanticRun = PASSinit;
-        this.errors = false;
-        this.depmsg = null;
-        this.userAttribDecl = null;
-        this.ddocUnittest = null;
     }
 
     final extern (D) this(Identifier ident)
     {
         //printf("Dsymbol::Dsymbol(%p, ident)\n", this);
         this.ident = ident;
-        this.parent = null;
-        this.csym = null;
-        this.isym = null;
-        this.loc = Loc();
-        this.comment = null;
-        this._scope = null;
         this.semanticRun = PASSinit;
-        this.errors = false;
-        this.depmsg = null;
-        this.userAttribDecl = null;
-        this.ddocUnittest = null;
     }
 
-    final static Dsymbol create(Identifier ident)
+    static Dsymbol create(Identifier ident)
     {
         return new Dsymbol(ident);
     }
 
-    char* toChars()
+    override const(char)* toChars()
     {
-        return ident ? ident.toChars() : cast(char*)"__anonymous";
+        return ident ? ident.toChars() : "__anonymous";
     }
 
     // helper to print fully qualified (template) arguments
-    char* toPrettyCharsHelper()
+    const(char)* toPrettyCharsHelper()
     {
         return toChars();
     }
@@ -248,19 +239,19 @@ public:
     {
         if (!loc.filename) // avoid bug 5861.
         {
-            Module m = getModule();
+            auto m = getModule();
             if (m && m.srcfile)
                 loc.filename = m.srcfile.toChars();
         }
         return loc;
     }
 
-    final char* locToChars()
+    final const(char)* locToChars()
     {
         return getLoc().toChars();
     }
 
-    bool equals(RootObject o)
+    override bool equals(RootObject o)
     {
         if (this == o)
             return true;
@@ -329,7 +320,7 @@ public:
             const(char)* message = null;
             for (Dsymbol p = this; p; p = p.parent)
             {
-                message = p.depmsg;
+                message = p.depdecl ? p.depdecl.getMessage() : null;
                 if (message)
                     break;
             }
@@ -410,16 +401,42 @@ public:
         return s;
     }
 
+    /**********************************
+     * `parent` field returns a lexically enclosing scope symbol this is a member of.
+     *
+     * `toParent()` returns a logically enclosing scope symbol this is a member of.
+     * It skips over TemplateMixin's.
+     *
+     * `toParent2()` returns an enclosing scope symbol this is living at runtime.
+     * It skips over both TemplateInstance's and TemplateMixin's.
+     * It's used when looking for the 'this' pointer of the enclosing function/class.
+     *
+     * Examples:
+     *  module mod;
+     *  template Foo(alias a) { mixin Bar!(); }
+     *  mixin template Bar() {
+     *    public {  // ProtDeclaration
+     *      void baz() { a = 2; }
+     *    }
+     *  }
+     *  void test() {
+     *    int v = 1;
+     *    alias foo = Foo!(v);
+     *    foo.baz();
+     *    assert(v == 2);
+     *  }
+     *
+     *  // s == FuncDeclaration('mod.test.Foo!().Bar!().baz()')
+     *  // s.parent == TemplateMixin('mod.test.Foo!().Bar!()')
+     *  // s.toParent() == TemplateInstance('mod.test.Foo!()')
+     *  // s.toParent2() == FuncDeclaration('mod.test')
+     */
     final Dsymbol toParent()
     {
         return parent ? parent.pastMixin() : null;
     }
 
-    /**********************************
-     * Use this instead of toParent() when looking for the
-     * 'this' pointer of the enclosing function/class.
-     * This skips over both TemplateInstance's and TemplateMixin's.
-     */
+    /// ditto
     final Dsymbol toParent2()
     {
         Dsymbol s = parent;
@@ -465,7 +482,7 @@ public:
     }
 
     // kludge for template.isSymbol()
-    final int dyncast()
+    override final int dyncast()
     {
         return DYNCAST_DSYMBOL;
     }
@@ -473,7 +490,7 @@ public:
     /*************************************
      * Do syntax copy of an array of Dsymbol's.
      */
-    final static Dsymbols* arraySyntaxCopy(Dsymbols* a)
+    static Dsymbols* arraySyntaxCopy(Dsymbols* a)
     {
         Dsymbols* b = null;
         if (a)
@@ -494,34 +511,62 @@ public:
 
     const(char)* toPrettyChars(bool QualifyTypes = false)
     {
-        Dsymbol p;
-        char* s;
-        char* q;
-        size_t len;
+        if (prettystring && !QualifyTypes)
+            return prettystring;
+
         //printf("Dsymbol::toPrettyChars() '%s'\n", toChars());
         if (!parent)
-            return toChars();
-        len = 0;
-        for (p = this; p; p = p.parent)
-            len += strlen(QualifyTypes ? p.toPrettyCharsHelper() : p.toChars()) + 1;
-        s = cast(char*)mem.xmalloc(len);
-        q = s + len - 1;
-        *q = 0;
-        for (p = this; p; p = p.parent)
         {
-            char* t = QualifyTypes ? p.toPrettyCharsHelper() : p.toChars();
-            len = strlen(t);
+            auto s = toChars();
+            if (!QualifyTypes)
+                prettystring = s;
+            return s;
+        }
+
+        // Computer number of components
+        size_t complength = 0;
+        for (Dsymbol p = this; p; p = p.parent)
+            ++complength;
+
+        // Allocate temporary array comp[]
+        alias T = const(char)[];
+        auto compptr = cast(T*)malloc(complength * T.sizeof);
+        if (!compptr)
+            Mem.error();
+        auto comp = compptr[0 .. complength];
+
+        // Fill in comp[] and compute length of final result
+        size_t length = 0;
+        int i;
+        for (Dsymbol p = this; p; p = p.parent)
+        {
+            const s = QualifyTypes ? p.toPrettyCharsHelper() : p.toChars();
+            const len = strlen(s);
+            comp[i] = s[0 .. len];
+            ++i;
+            length += len + 1;
+        }
+
+        auto s = cast(char*)mem.xmalloc(length);
+        auto q = s + length - 1;
+        *q = 0;
+        foreach (j; 0 .. complength)
+        {
+            const t = comp[j].ptr;
+            const len = comp[j].length;
             q -= len;
             memcpy(q, t, len);
             if (q == s)
                 break;
-            q--;
-            *q = '.';
+            *--q = '.';
         }
+        free(comp.ptr);
+        if (!QualifyTypes)
+            prettystring = s;
         return s;
     }
 
-    const(char)* kind()
+    const(char)* kind() const
     {
         return "symbol";
     }
@@ -529,6 +574,7 @@ public:
     /*********************************
      * If this symbol is really an alias for another,
      * return that other.
+     * If needed, semantic() is invoked due to resolve forward reference.
      */
     Dsymbol toAlias()
     {
@@ -543,6 +589,17 @@ public:
         return toAlias();
     }
 
+    /*********************************
+     * Iterate this dsymbol or members of this scoped dsymbol, then
+     * call `fp` with the found symbol and `param`.
+     * Params:
+     *  fp = function pointer to process the iterated symbol.
+     *       If it returns nonzero, the iteration will be aborted.
+     *  param = a parameter passed to fp.
+     * Returns:
+     *  nonzero if the iteration is aborted by the return value of fp,
+     *  or 0 if it's completed.
+     */
     int apply(Dsymbol_apply_ft_t fp, void* param)
     {
         return (*fp)(this, param);
@@ -562,12 +619,16 @@ public:
                 if (!s2.overloadInsert(this))
                 {
                     sds.multiplyDefined(Loc(), this, s2);
+                    errors = true;
                 }
             }
             if (sds.isAggregateDeclaration() || sds.isEnumDeclaration())
             {
                 if (ident == Id.__sizeof || ident == Id.__xalignof || ident == Id._mangleof)
+                {
                     error(".%s property cannot be redefined", ident.toChars());
+                    errors = true;
+                }
             }
         }
     }
@@ -582,8 +643,8 @@ public:
         if (!sc.nofree)
             sc.setNoFree(); // may need it even after semantic() finishes
         _scope = sc;
-        if (sc.depmsg)
-            depmsg = sc.depmsg;
+        if (sc.depdecl)
+            depdecl = sc.depdecl;
         if (!userAttribDecl)
             userAttribDecl = sc.userAttribDecl;
     }
@@ -618,22 +679,44 @@ public:
 
     /*********************************************
      * Search for ident as member of s.
-     * Input:
-     *      flags:  (see IgnoreXXX declared in dsymbol.h)
+     * Params:
+     *  loc = location to print for error messages
+     *  ident = identifier to search for
+     *  flags = IgnoreXXXX
      * Returns:
-     *      NULL if not found
+     *  null if not found
      */
     Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
     {
-        //printf("Dsymbol::search(this=%p,%s, ident='%s')\n", this, toChars(), ident->toChars());
+        //printf("Dsymbol::search(this=%p,%s, ident='%s')\n", this, toChars(), ident.toChars());
         return null;
     }
 
     final Dsymbol search_correct(Identifier ident)
     {
+        /***************************************************
+         * Search for symbol with correct spelling.
+         */
+        extern (D) void* symbol_search_fp(const(char)* seed, ref int cost)
+        {
+            /* If not in the lexer's string table, it certainly isn't in the symbol table.
+             * Doing this first is a lot faster.
+             */
+            size_t len = strlen(seed);
+            if (!len)
+                return null;
+            Identifier id = Identifier.lookup(seed, len);
+            if (!id)
+                return null;
+            cost = 0;
+            Dsymbol s = this;
+            Module.clearCache();
+            return cast(void*)s.search(Loc(), id, IgnoreErrors);
+        }
+
         if (global.gag)
             return null; // don't do it for speculative compiles; too time consuming
-        return cast(Dsymbol)speller(ident.toChars(), &symbol_search_fp, cast(void*)this, idchars);
+        return cast(Dsymbol)speller(ident.toChars(), &symbol_search_fp, idchars);
     }
 
     /***************************************
@@ -720,31 +803,6 @@ public:
         return null;
     }
 
-    // are we a member of an aggregate?
-    final AggregateDeclaration isAggregateMember()
-    {
-        Dsymbol parent = toParent();
-        if (parent && parent.isAggregateDeclaration())
-            return cast(AggregateDeclaration)parent;
-        return null;
-    }
-
-    // are we a member of an aggregate?
-    final AggregateDeclaration isAggregateMember2()
-    {
-        Dsymbol parent = toParent2();
-        if (parent && parent.isAggregateDeclaration())
-            return cast(AggregateDeclaration)parent;
-        return null;
-    }
-
-    // are we a member of a class?
-    final ClassDeclaration isClassMember()
-    {
-        AggregateDeclaration ad = isAggregateMember();
-        return ad ? ad.isClassDeclaration() : null;
-    }
-
     // is Dsymbol exported?
     bool isExport()
     {
@@ -768,24 +826,35 @@ public:
         return false;
     }
 
-    bool hasOverloads()
-    {
-        return false;
-    }
-
     // is this a LabelDsymbol()?
     LabelDsymbol isLabel()
     {
         return null;
     }
 
-    // is this a member of an AggregateDeclaration?
-    AggregateDeclaration isMember()
+    /// Returns an AggregateDeclaration when toParent() is that.
+    final AggregateDeclaration isMember()
     {
         //printf("Dsymbol::isMember() %s\n", toChars());
-        Dsymbol parent = toParent();
-        //printf("parent is %s %s\n", parent->kind(), parent->toChars());
-        return parent ? parent.isAggregateDeclaration() : null;
+        auto p = toParent();
+        //printf("parent is %s %s\n", p.kind(), p.toChars());
+        return p ? p.isAggregateDeclaration() : null;
+    }
+
+    /// Returns an AggregateDeclaration when toParent2() is that.
+    final AggregateDeclaration isMember2()
+    {
+        //printf("Dsymbol::isMember2() '%s'\n", toChars());
+        auto p = toParent2();
+        //printf("parent is %s %s\n", p.kind(), p.toChars());
+        return p ? p.isAggregateDeclaration() : null;
+    }
+
+    // is this a member of a ClassDeclaration?
+    final ClassDeclaration isClassMember()
+    {
+        auto ad = isMember();
+        return ad ? ad.isClassDeclaration() : null;
     }
 
     // is this a type?
@@ -817,7 +886,6 @@ public:
         print();
         printf("%s %s\n", kind(), toChars());
         assert(0);
-        return null;
     }
 
     /**************************************
@@ -837,9 +905,9 @@ public:
     /*****************************************
      * Same as Dsymbol::oneMember(), but look at an array of Dsymbols.
      */
-    final static bool oneMembers(Dsymbols* members, Dsymbol* ps, Identifier ident)
+    static bool oneMembers(Dsymbols* members, Dsymbol* ps, Identifier ident)
     {
-        //printf("Dsymbol::oneMembers() %d\n", members ? members->dim : 0);
+        //printf("Dsymbol::oneMembers() %d\n", members ? members.dim : 0);
         Dsymbol s = null;
         if (members)
         {
@@ -847,7 +915,7 @@ public:
             {
                 Dsymbol sx = (*members)[i];
                 bool x = sx.oneMember(ps, ident);
-                //printf("\t[%d] kind %s = %d, s = %p\n", i, sx->kind(), x, *ps);
+                //printf("\t[%d] kind %s = %d, s = %p\n", i, sx.kind(), x, *ps);
                 if (!x)
                 {
                     //printf("\tfalse 1\n");
@@ -856,12 +924,19 @@ public:
                 }
                 if (*ps)
                 {
+                    static bool isOverloadableAlias(Dsymbol s)
+                    {
+                        auto ad = s.isAliasDeclaration();
+                        return ad && ad.aliassym && ad.aliassym.isOverloadable();
+                    }
+
                     assert(ident);
                     if (!(*ps).ident || !(*ps).ident.equals(ident))
                         continue;
                     if (!s)
                         s = *ps;
-                    else if (s.isOverloadable() && (*ps).isOverloadable())
+                    else if ((   s .isOverloadable() || isOverloadableAlias(  s)) &&
+                             ((*ps).isOverloadable() || isOverloadableAlias(*ps)))
                     {
                         // keep head of overload set
                         FuncDeclaration f1 = s.isFuncDeclaration();
@@ -889,7 +964,7 @@ public:
                 }
             }
         }
-        *ps = s; // s is the one symbol, NULL if none
+        *ps = s; // s is the one symbol, null if none
         //printf("\ttrue\n");
         return true;
     }
@@ -928,7 +1003,7 @@ public:
     void addComment(const(char)* comment)
     {
         //if (comment)
-        //printf("adding comment '%s' to symbol %p '%s'\n", comment, this, toChars());
+        //    printf("adding comment '%s' to symbol %p '%s'\n", comment, this, toChars());
         if (!this.comment)
             this.comment = comment;
         else if (comment && strcmp(cast(char*)comment, cast(char*)this.comment) != 0)
@@ -946,11 +1021,11 @@ public:
         Dsymbol s = parent;
         for (; s; s = s.toParent())
         {
-            if (TemplateInstance ti = s.isTemplateInstance())
+            if (auto ti = s.isTemplateInstance())
             {
                 return false;
             }
-            if (Module m = s.isModule())
+            if (auto m = s.isModule())
             {
                 if (!m.isRoot())
                     return true;
@@ -961,306 +1036,257 @@ public:
     }
 
     // Eliminate need for dynamic_cast
-    Package isPackage()
+    inout(Package) isPackage() inout
     {
         return null;
     }
 
-    Module isModule()
+    inout(Module) isModule() inout
     {
         return null;
     }
 
-    EnumMember isEnumMember()
+    inout(EnumMember) isEnumMember() inout
     {
         return null;
     }
 
-    TemplateDeclaration isTemplateDeclaration()
+    inout(TemplateDeclaration) isTemplateDeclaration() inout
     {
         return null;
     }
 
-    TemplateInstance isTemplateInstance()
+    inout(TemplateInstance) isTemplateInstance() inout
     {
         return null;
     }
 
-    TemplateMixin isTemplateMixin()
+    inout(TemplateMixin) isTemplateMixin() inout
     {
         return null;
     }
 
-    Nspace isNspace()
+    inout(Nspace) isNspace() inout
     {
         return null;
     }
 
-    Declaration isDeclaration()
+    inout(Declaration) isDeclaration() inout
     {
         return null;
     }
 
-    ThisDeclaration isThisDeclaration()
+    inout(ThisDeclaration) isThisDeclaration() inout
     {
         return null;
     }
 
-    TypeInfoDeclaration isTypeInfoDeclaration()
+    inout(TypeInfoDeclaration) isTypeInfoDeclaration() inout
     {
         return null;
     }
 
-    TupleDeclaration isTupleDeclaration()
+    inout(TupleDeclaration) isTupleDeclaration() inout
     {
         return null;
     }
 
-    AliasDeclaration isAliasDeclaration()
+    inout(AliasDeclaration) isAliasDeclaration() inout
     {
         return null;
     }
 
-    AggregateDeclaration isAggregateDeclaration()
+    inout(AggregateDeclaration) isAggregateDeclaration() inout
     {
         return null;
     }
 
-    FuncDeclaration isFuncDeclaration()
+    inout(FuncDeclaration) isFuncDeclaration() inout
     {
         return null;
     }
 
-    FuncAliasDeclaration isFuncAliasDeclaration()
+    inout(FuncAliasDeclaration) isFuncAliasDeclaration() inout
     {
         return null;
     }
 
-    OverDeclaration isOverDeclaration()
+    inout(OverDeclaration) isOverDeclaration() inout
     {
         return null;
     }
 
-    FuncLiteralDeclaration isFuncLiteralDeclaration()
+    inout(FuncLiteralDeclaration) isFuncLiteralDeclaration() inout
     {
         return null;
     }
 
-    CtorDeclaration isCtorDeclaration()
+    inout(CtorDeclaration) isCtorDeclaration() inout
     {
         return null;
     }
 
-    PostBlitDeclaration isPostBlitDeclaration()
+    inout(PostBlitDeclaration) isPostBlitDeclaration() inout
     {
         return null;
     }
 
-    DtorDeclaration isDtorDeclaration()
+    inout(DtorDeclaration) isDtorDeclaration() inout
     {
         return null;
     }
 
-    StaticCtorDeclaration isStaticCtorDeclaration()
+    inout(StaticCtorDeclaration) isStaticCtorDeclaration() inout
     {
         return null;
     }
 
-    StaticDtorDeclaration isStaticDtorDeclaration()
+    inout(StaticDtorDeclaration) isStaticDtorDeclaration() inout
     {
         return null;
     }
 
-    SharedStaticCtorDeclaration isSharedStaticCtorDeclaration()
+    inout(SharedStaticCtorDeclaration) isSharedStaticCtorDeclaration() inout
     {
         return null;
     }
 
-    SharedStaticDtorDeclaration isSharedStaticDtorDeclaration()
+    inout(SharedStaticDtorDeclaration) isSharedStaticDtorDeclaration() inout
     {
         return null;
     }
 
-    InvariantDeclaration isInvariantDeclaration()
+    inout(InvariantDeclaration) isInvariantDeclaration() inout
     {
         return null;
     }
 
-    UnitTestDeclaration isUnitTestDeclaration()
+    inout(UnitTestDeclaration) isUnitTestDeclaration() inout
     {
         return null;
     }
 
-    NewDeclaration isNewDeclaration()
+    inout(NewDeclaration) isNewDeclaration() inout
     {
         return null;
     }
 
-    VarDeclaration isVarDeclaration()
+    inout(VarDeclaration) isVarDeclaration() inout
     {
         return null;
     }
 
-    ClassDeclaration isClassDeclaration()
+    inout(ClassDeclaration) isClassDeclaration() inout
     {
         return null;
     }
 
-    StructDeclaration isStructDeclaration()
+    inout(StructDeclaration) isStructDeclaration() inout
     {
         return null;
     }
 
-    UnionDeclaration isUnionDeclaration()
+    inout(UnionDeclaration) isUnionDeclaration() inout
     {
         return null;
     }
 
-    InterfaceDeclaration isInterfaceDeclaration()
+    inout(InterfaceDeclaration) isInterfaceDeclaration() inout
     {
         return null;
     }
 
-    ScopeDsymbol isScopeDsymbol()
+    inout(ScopeDsymbol) isScopeDsymbol() inout
     {
         return null;
     }
 
-    WithScopeSymbol isWithScopeSymbol()
+    inout(WithScopeSymbol) isWithScopeSymbol() inout
     {
         return null;
     }
 
-    ArrayScopeSymbol isArrayScopeSymbol()
+    inout(ArrayScopeSymbol) isArrayScopeSymbol() inout
     {
         return null;
     }
 
-    Import isImport()
+    inout(Import) isImport() inout
     {
         return null;
     }
 
-    EnumDeclaration isEnumDeclaration()
+    inout(EnumDeclaration) isEnumDeclaration() inout
     {
         return null;
     }
 
-    DeleteDeclaration isDeleteDeclaration()
+    inout(DeleteDeclaration) isDeleteDeclaration() inout
     {
         return null;
     }
 
-    SymbolDeclaration isSymbolDeclaration()
+    inout(SymbolDeclaration) isSymbolDeclaration() inout
     {
         return null;
     }
 
-    AttribDeclaration isAttribDeclaration()
+    inout(AttribDeclaration) isAttribDeclaration() inout
     {
         return null;
     }
 
-    OverloadSet isOverloadSet()
+    inout(AnonDeclaration) isAnonDeclaration() inout
     {
         return null;
     }
 
+    inout(OverloadSet) isOverloadSet() inout
+    {
+        return null;
+    }
+
+    /************
+     */
     void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-/***************************************************
- * Search for symbol with correct spelling.
+/***********************************************************
+ * Dsymbol that generates a scope
  */
-extern (C++) void* symbol_search_fp(void* arg, const(char)* seed, int* cost)
-{
-    /* If not in the lexer's string table, it certainly isn't in the symbol table.
-     * Doing this first is a lot faster.
-     */
-    size_t len = strlen(seed);
-    if (!len)
-        return null;
-    Identifier id = Identifier.lookup(seed, len);
-    if (!id)
-        return null;
-    *cost = 0;
-    Dsymbol s = cast(Dsymbol)arg;
-    Module.clearCache();
-    return cast(void*)s.search(Loc(), id, IgnoreErrors);
-}
-
-/***************************************
- * Determine number of Dsymbols, folding in AttribDeclaration members.
- */
-extern (C++) static int dimDg(void* ctx, size_t n, Dsymbol)
-{
-    ++*cast(size_t*)ctx;
-    return 0;
-}
-
-/***************************************
- * Get nth Dsymbol, folding in AttribDeclaration members.
- * Returns:
- *      Dsymbol*        nth Dsymbol
- *      NULL            not found, *pn gets incremented by the number
- *                      of Dsymbols
- */
-struct GetNthSymbolCtx
-{
-    size_t nth;
-    Dsymbol sym;
-}
-
-extern (C++) static int getNthSymbolDg(void* ctx, size_t n, Dsymbol sym)
-{
-    GetNthSymbolCtx* p = cast(GetNthSymbolCtx*)ctx;
-    if (n == p.nth)
-    {
-        p.sym = sym;
-        return 1;
-    }
-    return 0;
-}
-
-// Dsymbol that generates a scope
 extern (C++) class ScopeDsymbol : Dsymbol
 {
-public:
-    Dsymbols* members; // all Dsymbol's in this scope
-    DsymbolTable symtab; // members[] sorted into table
+    Dsymbols* members;          // all Dsymbol's in this scope
+    DsymbolTable symtab;        // members[] sorted into table
+    uint endlinnum;             // the linnumber of the statement after the scope (0 if unknown)
 
 private:
-    Dsymbols* imports; // imported Dsymbol's
-    PROTKIND* prots; // array of PROTKIND, one for each import
+    /// symbols whose members have been imported, i.e. imported modules and template mixins
+    Dsymbols* importedScopes;
+    PROTKIND* prots;            // array of PROTKIND, one for each import
+
+    import ddmd.root.array : BitArray;
+    BitArray accessiblePackages;// whitelist of accessible (imported) packages
 
 public:
-    /********************************* ScopeDsymbol ****************************/
     final extern (D) this()
     {
-        super();
-        members = null;
-        symtab = null;
-        imports = null;
-        prots = null;
     }
 
     final extern (D) this(Identifier id)
     {
         super(id);
-        members = null;
-        symtab = null;
-        imports = null;
-        prots = null;
     }
 
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         //printf("ScopeDsymbol::syntaxCopy('%s')\n", toChars());
         ScopeDsymbol sds = s ? cast(ScopeDsymbol)s : new ScopeDsymbol(ident);
         sds.members = arraySyntaxCopy(members);
+        sds.endlinnum = endlinnum;
         return sds;
     }
 
@@ -1268,34 +1294,60 @@ public:
      * This function is #1 on the list of functions that eat cpu time.
      * Be very, very careful about slowing it down.
      */
-    Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
+    override Dsymbol search(Loc loc, Identifier ident, int flags = SearchLocalsOnly)
     {
-        //printf("%s->ScopeDsymbol::search(ident='%s', flags=x%x)\n", toChars(), ident->toChars(), flags);
+        //printf("%s.ScopeDsymbol::search(ident='%s', flags=x%x)\n", toChars(), ident.toChars(), flags);
         //if (strcmp(ident->toChars(),"c") == 0) *(char*)0=0;
+
         // Look in symbols declared in this module
-        Dsymbol s1 = symtab ? symtab.lookup(ident) : null;
-        //printf("\ts1 = %p, imports = %p, %d\n", s1, imports, imports ? imports->dim : 0);
-        if (s1)
+        if (symtab && !(flags & SearchImportsOnly))
         {
-            //printf("\ts = '%s.%s'\n",toChars(),s1->toChars());
-            return s1;
+            //printf(" look in locals\n");
+            auto s1 = symtab.lookup(ident);
+            if (s1)
+            {
+                //printf("\tfound in locals = '%s.%s'\n",toChars(),s1.toChars());
+                return s1;
+            }
         }
-        if (imports)
+        //printf(" not found in locals\n");
+
+        // Look in imported scopes
+        if (importedScopes)
         {
+            //printf(" look in imports\n");
             Dsymbol s = null;
             OverloadSet a = null;
-            int sflags = flags & (IgnoreErrors | IgnoreAmbiguous); // remember these in recursive searches
             // Look in imported modules
-            for (size_t i = 0; i < imports.dim; i++)
+            for (size_t i = 0; i < importedScopes.dim; i++)
             {
                 // If private import, don't search it
-                if ((flags & IgnorePrivateMembers) && prots[i] == PROTprivate)
+                if ((flags & IgnorePrivateImports) && prots[i] == PROTprivate)
                     continue;
-                Dsymbol ss = (*imports)[i];
+                int sflags = flags & (IgnoreErrors | IgnoreAmbiguous | IgnoreSymbolVisibility); // remember these in recursive searches
+                Dsymbol ss = (*importedScopes)[i];
                 //printf("\tscanning import '%s', prots = %d, isModule = %p, isImport = %p\n", ss->toChars(), prots[i], ss->isModule(), ss->isImport());
+
+                if (ss.isModule())
+                {
+                    if (flags & SearchLocalsOnly)
+                        continue;
+                }
+                else // mixin template
+                {
+                    if (flags & SearchImportsOnly)
+                        continue;
+                    // compatibility with -transition=import (Bugzilla 15925)
+                    // SearchLocalsOnly should always get set for new lookup rules
+                    sflags |= (flags & SearchLocalsOnly);
+                }
+
                 /* Don't find private members if ss is a module
                  */
-                Dsymbol s2 = ss.search(loc, ident, sflags | (ss.isModule() ? IgnorePrivateMembers : IgnoreNone));
+                Dsymbol s2 = ss.search(loc, ident, sflags | (ss.isModule() ? IgnorePrivateImports : IgnoreNone));
+                import ddmd.access : symbolIsVisible;
+                if (!s2 || !(flags & IgnoreSymbolVisibility) && !symbolIsVisible(this, s2))
+                    continue;
                 if (!s)
                 {
                     s = s2;
@@ -1354,18 +1406,31 @@ public:
                 if (a)
                 {
                     if (!s.isOverloadSet())
+                    {
                         a = mergeOverloadSet(ident, a, s);
+                        if (symtab)
+                            symtabInsert(a);    // Bugzilla 15857
+                    }
                     s = a;
                 }
-                if (!(flags & IgnoreErrors) && s.prot().kind == PROTprivate && !s.parent.isTemplateMixin())
+                // TODO: remove once private symbol visibility has been deprecated
+                if (!(flags & IgnoreErrors) && s.prot().kind == PROTprivate &&
+                    !s.isOverloadable() && !s.parent.isTemplateMixin() && !s.parent.isNspace())
                 {
-                    if (!s.isImport())
+                    AliasDeclaration ad = void;
+                    // accessing private selective and renamed imports is
+                    // deprecated by restricting the symbol visibility
+                    if (s.isImport() || (ad = s.isAliasDeclaration()) !is null && ad._import !is null)
+                    {}
+                    else
                         error(loc, "%s %s is private", s.kind(), s.toPrettyChars());
                 }
+                //printf("\tfound in imports %s.%s\n", toChars(), s.toChars());
                 return s;
             }
+            //printf(" not found in imports\n");
         }
-        return s1;
+        return null;
     }
 
     final OverloadSet mergeOverloadSet(Identifier ident, OverloadSet os, Dsymbol s)
@@ -1420,13 +1485,13 @@ public:
         // No circular or redundant import's
         if (s != this)
         {
-            if (!imports)
-                imports = new Dsymbols();
+            if (!importedScopes)
+                importedScopes = new Dsymbols();
             else
             {
-                for (size_t i = 0; i < imports.dim; i++)
+                for (size_t i = 0; i < importedScopes.dim; i++)
                 {
-                    Dsymbol ss = (*imports)[i];
+                    Dsymbol ss = (*importedScopes)[i];
                     if (ss == s) // if already imported
                     {
                         if (protection.kind > prots[i])
@@ -1435,18 +1500,31 @@ public:
                     }
                 }
             }
-            imports.push(s);
-            prots = cast(PROTKIND*)mem.xrealloc(prots, imports.dim * (prots[0]).sizeof);
-            prots[imports.dim - 1] = protection.kind;
+            importedScopes.push(s);
+            prots = cast(PROTKIND*)mem.xrealloc(prots, importedScopes.dim * (prots[0]).sizeof);
+            prots[importedScopes.dim - 1] = protection.kind;
         }
     }
 
-    final bool isforwardRef()
+    final void addAccessiblePackage(Package p)
+    {
+        if (accessiblePackages.length <= p.tag)
+            accessiblePackages.length = p.tag + 1;
+        accessiblePackages[p.tag] = true;
+    }
+
+    final bool isPackageAccessible(Package p)
+    {
+        return p.tag < accessiblePackages.length &&
+            accessiblePackages[p.tag];
+    }
+
+    override final bool isforwardRef()
     {
         return (members is null);
     }
 
-    final static void multiplyDefined(Loc loc, Dsymbol s1, Dsymbol s2)
+    static void multiplyDefined(Loc loc, Dsymbol s1, Dsymbol s2)
     {
         version (none)
         {
@@ -1464,7 +1542,7 @@ public:
         }
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "ScopeDsymbol";
     }
@@ -1509,7 +1587,7 @@ public:
      * Return true if any of the members are static ctors or static dtors, or if
      * any members have members that are.
      */
-    bool hasStaticCtorOrDtor()
+    override bool hasStaticCtorOrDtor()
     {
         if (members)
         {
@@ -1523,44 +1601,73 @@ public:
         return false;
     }
 
-    final static size_t dim(Dsymbols* members)
+    /***************************************
+     * Determine number of Dsymbols, folding in AttribDeclaration members.
+     */
+    static size_t dim(Dsymbols* members)
     {
         size_t n = 0;
+        int dimDg(size_t idx, Dsymbol s)
+        {
+            ++n;
+            return 0;
+        }
+
         _foreach(null, members, &dimDg, &n);
         return n;
     }
 
-    final static Dsymbol getNth(Dsymbols* members, size_t nth, size_t* pn = null)
+    /***************************************
+     * Get nth Dsymbol, folding in AttribDeclaration members.
+     * Returns:
+     *      Dsymbol*        nth Dsymbol
+     *      NULL            not found, *pn gets incremented by the number
+     *                      of Dsymbols
+     */
+    static Dsymbol getNth(Dsymbols* members, size_t nth, size_t* pn = null)
     {
-        GetNthSymbolCtx ctx = GetNthSymbolCtx(nth, null);
-        int res = _foreach(null, members, &getNthSymbolDg, &ctx);
-        return res ? ctx.sym : null;
+        Dsymbol sym = null;
+
+        int getNthSymbolDg(size_t n, Dsymbol s)
+        {
+            if (n == nth)
+            {
+                sym = s;
+                return 1;
+            }
+            return 0;
+        }
+
+        int res = _foreach(null, members, &getNthSymbolDg);
+        return res ? sym : null;
     }
 
-    extern (C++) alias ForeachDg = int function(void* ctx, size_t idx, Dsymbol s);
+    extern (D) alias ForeachDg = int delegate(size_t idx, Dsymbol s);
 
     /***************************************
      * Expands attribute declarations in members in depth first
-     * order. Calls dg(void *ctx, size_t symidx, Dsymbol *sym) for each
+     * order. Calls dg(size_t symidx, Dsymbol *sym) for each
      * member.
      * If dg returns !=0, stops and returns that value else returns 0.
      * Use this function to avoid the O(N + N^2/2) complexity of
      * calculating dim and calling N times getNth.
+     * Returns:
+     *  last value returned by dg()
      */
-    final static int _foreach(Scope* sc, Dsymbols* members, ForeachDg dg, void* ctx, size_t* pn = null)
+    extern (D) static int _foreach(Scope* sc, Dsymbols* members, scope ForeachDg dg, size_t* pn = null)
     {
         assert(dg);
         if (!members)
             return 0;
         size_t n = pn ? *pn : 0; // take over index
         int result = 0;
-        for (size_t i = 0; i < members.dim; i++)
+        foreach (size_t i; 0 .. members.dim)
         {
             Dsymbol s = (*members)[i];
             if (AttribDeclaration a = s.isAttribDeclaration())
-                result = _foreach(sc, a.include(sc, null), dg, ctx, &n);
+                result = _foreach(sc, a.include(sc, null), dg, &n);
             else if (TemplateMixin tm = s.isTemplateMixin())
-                result = _foreach(sc, tm.members, dg, ctx, &n);
+                result = _foreach(sc, tm.members, dg, &n);
             else if (s.isTemplateInstance())
             {
             }
@@ -1568,7 +1675,7 @@ public:
             {
             }
             else
-                result = dg(ctx, n++, s);
+                result = dg(n++, s);
             if (result)
                 break;
         }
@@ -1577,38 +1684,40 @@ public:
         return result;
     }
 
-    final ScopeDsymbol isScopeDsymbol()
+    override final inout(ScopeDsymbol) isScopeDsymbol() inout
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-// With statement scope
+/***********************************************************
+ * With statement scope
+ */
 extern (C++) final class WithScopeSymbol : ScopeDsymbol
 {
-public:
     WithStatement withstate;
 
-    /****************************** WithScopeSymbol ******************************/
     extern (D) this(WithStatement withstate)
     {
-        super();
         this.withstate = withstate;
     }
 
-    Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
+    override Dsymbol search(Loc loc, Identifier ident, int flags = SearchLocalsOnly)
     {
+        //printf("WithScopeSymbol.search(%s)\n", ident.toChars());
+        if (flags & SearchImportsOnly)
+            return null;
         // Acts as proxy to the with class declaration
         Dsymbol s = null;
         Expression eold = null;
         for (Expression e = withstate.exp; e != eold; e = resolveAliasThis(_scope, e))
         {
-            if (e.op == TOKimport)
+            if (e.op == TOKscope)
             {
                 s = (cast(ScopeExp)e).sds;
             }
@@ -1623,7 +1732,7 @@ public:
             }
             if (s)
             {
-                s = s.search(loc, ident);
+                s = s.search(loc, ident, flags);
                 if (s)
                     return s;
             }
@@ -1632,56 +1741,47 @@ public:
         return null;
     }
 
-    WithScopeSymbol isWithScopeSymbol()
+    override inout(WithScopeSymbol) isWithScopeSymbol() inout
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-// Array Index/Slice scope
+/***********************************************************
+ * Array Index/Slice scope
+ */
 extern (C++) final class ArrayScopeSymbol : ScopeDsymbol
 {
-public:
-    Expression exp; // IndexExp or SliceExp
-    TypeTuple type; // for tuple[length]
-    TupleDeclaration td; // for tuples of objects
+    Expression exp;         // IndexExp or SliceExp
+    TypeTuple type;         // for tuple[length]
+    TupleDeclaration td;    // for tuples of objects
     Scope* sc;
 
-    /****************************** ArrayScopeSymbol ******************************/
     extern (D) this(Scope* sc, Expression e)
     {
-        super();
         assert(e.op == TOKindex || e.op == TOKslice || e.op == TOKarray);
         exp = e;
-        type = null;
-        td = null;
         this.sc = sc;
     }
 
     extern (D) this(Scope* sc, TypeTuple t)
     {
-        super();
-        exp = null;
         type = t;
-        td = null;
         this.sc = sc;
     }
 
     extern (D) this(Scope* sc, TupleDeclaration s)
     {
-        super();
-        exp = null;
-        type = null;
         td = s;
         this.sc = sc;
     }
 
-    Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
+    override Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
     {
         //printf("ArrayScopeSymbol::search('%s', flags = %d)\n", ident->toChars(), flags);
         if (ident == Id.dollar)
@@ -1853,24 +1953,24 @@ public:
         return null;
     }
 
-    ArrayScopeSymbol isArrayScopeSymbol()
+    override inout(ArrayScopeSymbol) isArrayScopeSymbol() inout
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-// Overload Sets
+/***********************************************************
+ * Overload Sets
+ */
 extern (C++) final class OverloadSet : Dsymbol
 {
-public:
-    Dsymbols a; // array of Dsymbols
+    Dsymbols a;     // array of Dsymbols
 
-    /********************************* OverloadSet ****************************/
     extern (D) this(Identifier ident, OverloadSet os = null)
     {
         super(ident);
@@ -1886,36 +1986,31 @@ public:
         a.push(s);
     }
 
-    OverloadSet isOverloadSet()
+    override inout(OverloadSet) isOverloadSet() inout
     {
         return this;
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "overloadset";
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-// Table of Dsymbol's
+/***********************************************************
+ * Table of Dsymbol's
+ */
 extern (C++) final class DsymbolTable : RootObject
 {
-public:
     AA* tab;
 
-    /****************************** DsymbolTable ******************************/
-    extern (D) this()
-    {
-        tab = null;
-    }
-
     // Look up Identifier. Return Dsymbol if found, NULL if not.
-    Dsymbol lookup(Identifier ident)
+    Dsymbol lookup(const Identifier ident)
     {
         //printf("DsymbolTable::lookup(%s)\n", (char*)ident->string);
         return cast(Dsymbol)dmd_aaGetRvalue(tab, cast(void*)ident);
@@ -1925,7 +2020,7 @@ public:
     Dsymbol insert(Dsymbol s)
     {
         //printf("DsymbolTable::insert(this = %p, '%s')\n", this, s->ident->toChars());
-        Identifier ident = s.ident;
+        const ident = s.ident;
         Dsymbol* ps = cast(Dsymbol*)dmd_aaGet(&tab, cast(void*)ident);
         if (*ps)
             return null; // already in table
@@ -1936,14 +2031,14 @@ public:
     // Look for Dsymbol in table. If there, return it. If not, insert s and return that.
     Dsymbol update(Dsymbol s)
     {
-        Identifier ident = s.ident;
+        const ident = s.ident;
         Dsymbol* ps = cast(Dsymbol*)dmd_aaGet(&tab, cast(void*)ident);
         *ps = s;
         return s;
     }
 
     // when ident and s are not the same
-    Dsymbol insert(Identifier ident, Dsymbol s)
+    Dsymbol insert(const Identifier ident, Dsymbol s)
     {
         //printf("DsymbolTable::insert()\n");
         Dsymbol* ps = cast(Dsymbol*)dmd_aaGet(&tab, cast(void*)ident);
@@ -1951,5 +2046,14 @@ public:
             return null; // already in table
         *ps = s;
         return s;
+    }
+
+    /*****
+     * Returns:
+     *  number of symbols in symbol table
+     */
+    uint len() const pure
+    {
+        return cast(uint)dmd_aaLen(tab);
     }
 }

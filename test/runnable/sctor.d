@@ -317,6 +317,56 @@ class D14351c : B14351
 }
 
 /***************************************************/
+// 14944
+
+static int[2] tbl14944;
+
+static this()
+{
+    foreach (ref v; tbl14944)
+    {
+        // This is an initialization of referenced memory
+        // rather than the initialization of the reference.
+        v = 1;
+    }
+}
+
+void test14944()
+{
+    assert(tbl14944[0] == 1);
+}
+
+/***************************************************/
+// 15258 - a field initialization affects other overlapped fields
+
+class C15258
+{
+    this(const char* result)
+    {
+        this.result = result;
+    }
+
+    union
+    {
+        const char** results;
+        const char* result;
+    }
+}
+
+/***************************************************/
+// 15665
+
+scope class C15665 (V)
+{
+    this () {}
+}
+
+void test15665()
+{
+    scope foo = new C15665!int;
+}
+
+/***************************************************/
 
 int main()
 {
@@ -324,6 +374,8 @@ int main()
     test9665();
     test11246();
     test13515();
+    test14944();
+    test15665();
 
     printf("Success\n");
     return 0;

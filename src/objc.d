@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -18,13 +18,12 @@ import ddmd.dstruct;
 import ddmd.expression;
 import ddmd.func;
 import ddmd.globals;
+import ddmd.gluelayer;
 import ddmd.id;
 import ddmd.identifier;
 import ddmd.mtype;
 import ddmd.root.outbuffer;
 import ddmd.root.stringtable;
-
-extern(C++) void objc_initSymbols();
 
 struct ObjcSelector
 {
@@ -80,21 +79,22 @@ struct ObjcSelector
         OutBuffer buf;
         size_t pcount = 0;
         TypeFunction ftype = cast(TypeFunction)fdecl.type;
+        const id = fdecl.ident.toString();
         // Special case: property setter
         if (ftype.isproperty && ftype.parameters && ftype.parameters.dim == 1)
         {
             // rewrite "identifier" as "setIdentifier"
-            char firstChar = fdecl.ident.string[0];
+            char firstChar = id[0];
             if (firstChar >= 'a' && firstChar <= 'z')
                 firstChar = cast(char)(firstChar - 'a' + 'A');
             buf.writestring("set");
             buf.writeByte(firstChar);
-            buf.write(fdecl.ident.string + 1, fdecl.ident.len - 1);
+            buf.write(id.ptr + 1, id.length - 1);
             buf.writeByte(':');
             goto Lcomplete;
         }
         // write identifier in selector
-        buf.write(fdecl.ident.string, fdecl.ident.len);
+        buf.write(id.ptr, id.length);
         // add mangled type and colon for each parameter
         if (ftype.parameters && ftype.parameters.dim)
         {
@@ -136,25 +136,34 @@ struct Objc_FuncDeclaration
     extern (D) this(FuncDeclaration fdecl)
     {
         this.fdecl = fdecl;
-        selector = null;
     }
 }
 
 // MARK: semantic
 extern (C++) void objc_ClassDeclaration_semantic_PASSinit_LINKobjc(ClassDeclaration cd)
 {
-    cd.objc.objc = true;
+    if (global.params.hasObjectiveC)
+        cd.objc.objc = true;
+    else
+        cd.error("Objective-C classes not supported");
 }
 
 extern (C++) void objc_InterfaceDeclaration_semantic_objcExtern(InterfaceDeclaration id, Scope* sc)
 {
     if (sc.linkage == LINKobjc)
-        id.objc.objc = true;
+    {
+        if (global.params.hasObjectiveC)
+            id.objc.objc = true;
+        else
+            id.error("Objective-C interfaces not supported");
+    }
 }
 
 // MARK: semantic
 extern (C++) void objc_FuncDeclaration_semantic_setSelector(FuncDeclaration fd, Scope* sc)
 {
+    import ddmd.tokens;
+
     if (!fd.userAttribDecl)
         return;
     Expressions* udas = fd.userAttribDecl.getAttributes();
@@ -162,15 +171,15 @@ extern (C++) void objc_FuncDeclaration_semantic_setSelector(FuncDeclaration fd, 
     for (size_t i = 0; i < udas.dim; i++)
     {
         Expression uda = (*udas)[i];
-        assert(uda.type);
-        if (uda.type.ty != Ttuple)
+        assert(uda);
+        if (uda.op != TOKtuple)
             continue;
         Expressions* exps = (cast(TupleExp)uda).exps;
         for (size_t j = 0; j < exps.dim; j++)
         {
             Expression e = (*exps)[j];
-            assert(e.type);
-            if (e.type.ty != Tstruct)
+            assert(e);
+            if (e.op != TOKstructliteral)
                 continue;
             StructLiteralExp literal = cast(StructLiteralExp)e;
             assert(literal.sd);
@@ -217,7 +226,11 @@ extern (C++) void objc_FuncDeclaration_semantic_checkLinkage(FuncDeclaration fd)
 // MARK: init
 extern (C++) void objc_tryMain_dObjc()
 {
-    VersionCondition.addPredefinedGlobalIdent("D_ObjectiveC");
+    if (global.params.isOSX && global.params.is64bit)
+    {
+        global.params.hasObjectiveC = true;
+        VersionCondition.addPredefinedGlobalIdent("D_ObjectiveC");
+    }
 }
 
 extern (C++) void objc_tryMain_init()

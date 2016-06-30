@@ -1,45 +1,44 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the
+ * $(LINK2 http://www.dlang.org, D programming language).
+ *
+ * Copyright:   Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
+ * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:      $(DMDSRC _aliasthis.d)
+ */
 
 module ddmd.aliasthis;
 
+import core.stdc.stdio;
 import ddmd.aggregate;
 import ddmd.declaration;
 import ddmd.dscope;
 import ddmd.dsymbol;
 import ddmd.errors;
 import ddmd.expression;
-import ddmd.func;
 import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.identifier;
 import ddmd.mtype;
 import ddmd.opover;
-import ddmd.root.outbuffer;
 import ddmd.tokens;
 import ddmd.visitor;
 
-/**************************************************************/
+/***********************************************************
+ * alias ident this;
+ */
 extern (C++) final class AliasThis : Dsymbol
 {
-public:
-    // alias Identifier this;
     Identifier ident;
 
-    // it's anonymous (no identifier)
     extern (D) this(Loc loc, Identifier ident)
     {
-        super(null);
+        super(null);    // it's anonymous (no identifier)
         this.loc = loc;
         this.ident = ident;
     }
 
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
         /* Since there is no semantic information stored here,
@@ -48,7 +47,7 @@ public:
         return this;
     }
 
-    void semantic(Scope* sc)
+    override void semantic(Scope* sc)
     {
         Dsymbol p = sc.parent.pastMixin();
         AggregateDeclaration ad = p.isAggregateDeclaration();
@@ -57,6 +56,7 @@ public:
             .error(loc, "alias this can only be a member of aggregate, not %s %s", p.kind(), p.toChars());
             return;
         }
+
         assert(ad.members);
         Dsymbol s = ad.search(loc, ident);
         if (!s)
@@ -68,22 +68,17 @@ public:
                 .error(loc, "undefined identifier %s", ident.toChars());
             return;
         }
-        else if (ad.aliasthis && s != ad.aliasthis)
+        if (ad.aliasthis && s != ad.aliasthis)
         {
             .error(loc, "there can be only one alias this");
             return;
         }
-        if (ad.type.ty == Tstruct && (cast(TypeStruct)ad.type).sym != ad)
-        {
-            AggregateDeclaration ad2 = (cast(TypeStruct)ad.type).sym;
-            assert(ad2.type == Type.terror);
-            ad.aliasthis = ad2.aliasthis;
-            return;
-        }
+
         /* disable the alias this conversion so the implicit conversion check
          * doesn't use it.
          */
         ad.aliasthis = null;
+
         Dsymbol sx = s;
         if (sx.isAliasDeclaration())
             sx = sx.toAlias();
@@ -97,10 +92,11 @@ public:
                 .error(loc, "alias this is not reachable as %s already converts to %s", ad.toChars(), t.toChars());
             }
         }
+
         ad.aliasthis = s;
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "alias this";
     }
@@ -110,7 +106,7 @@ public:
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
@@ -130,14 +126,16 @@ extern (C++) Expression resolveAliasThis(Scope* sc, Expression e, bool gag = fal
         {
             if (e.op == TOKvar)
             {
-                if (FuncDeclaration f = (cast(VarExp)e).var.isFuncDeclaration())
+                if (auto fd = (cast(VarExp)e).var.isFuncDeclaration())
                 {
                     // Bugzilla 13009: Support better match for the overloaded alias this.
-                    Type t;
-                    f = f.overloadModMatch(loc, tthis, t);
-                    if (f && t)
+                    bool hasOverloads;
+                    if (auto f = fd.overloadModMatch(loc, tthis, hasOverloads))
                     {
-                        e = new VarExp(loc, f, 0); // use better match
+                        if (!hasOverloads)
+                            fd = f;     // use exact match
+                        e = new VarExp(loc, fd, hasOverloads);
+                        e.type = f.type;
                         e = new CallExp(loc, e);
                         goto L1;
                     }

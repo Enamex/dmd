@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -8,8 +8,25 @@
 
 module ddmd.libmscoff;
 
-import core.stdc.stdlib, core.stdc.string, core.sys.windows.windows, core.sys.windows.stat, core.stdc.time, core.stdc.stdio, core.stdc.stdarg, core.stdc.string;
-import ddmd.globals, ddmd.lib, ddmd.mars, ddmd.root.array, ddmd.root.file, ddmd.root.filename, ddmd.root.outbuffer, ddmd.root.port, ddmd.root.stringtable, ddmd.scanmscoff, ddmd.errors;
+import core.stdc.stdlib;
+import core.stdc.string;
+import core.sys.windows.windows;
+import core.sys.windows.stat;
+import core.stdc.time;
+import core.stdc.stdio;
+import core.stdc.stdarg;
+import core.stdc.string;
+import ddmd.globals;
+import ddmd.lib;
+import ddmd.root.array;
+import ddmd.root.file;
+import ddmd.root.filename;
+import ddmd.root.outbuffer;
+import ddmd.root.port;
+import ddmd.root.stringtable;
+import ddmd.scanmscoff;
+import ddmd.errors;
+import ddmd.utils;
 
 enum LOG = false;
 
@@ -36,7 +53,6 @@ alias MSCoffObjSymbols = Array!(MSCoffObjSymbol*);
 
 extern (C++) final class LibMSCoff : Library
 {
-public:
     File* libfile;
     MSCoffObjModules objmodules; // MSCoffObjModule[]
     MSCoffObjSymbols objsymbols; // MSCoffObjSymbol[]
@@ -44,7 +60,6 @@ public:
 
     extern (D) this()
     {
-        libfile = null;
         tab._init(14000);
     }
 
@@ -53,7 +68,7 @@ public:
      * and the filename.
      * Add default library file name extension.
      */
-    void setFilename(const(char)* dir, const(char)* filename)
+    override void setFilename(const(char)* dir, const(char)* filename)
     {
         static if (LOG)
         {
@@ -82,7 +97,7 @@ public:
      * If the buffer is NULL, use module_name as the file name
      * and load the file.
      */
-    void addObject(const(char)* module_name, void* buf, size_t buflen)
+    override void addObject(const(char)* module_name, void* buf, size_t buflen)
     {
         if (!module_name)
             module_name = "";
@@ -337,16 +352,15 @@ public:
                     if (m == objmodules.dim)
                     {
                         reason = __LINE__;
-                        goto Lcorrupt;
-                        // didn't find it
+                        goto Lcorrupt; // didn't find it
                     }
                     MSCoffObjModule* om = objmodules[m];
                     //printf("\tom offset = x%x\n", (char *)om->base - (char *)buf);
                     if (moff == cast(char*)om.base - cast(char*)buf)
                     {
                         addSymbol(om, name, 1);
-                        //                  if (mstart == m)
-                        //                      mstart++;
+                        //if (mstart == m)
+                        //    mstart++;
                         break;
                     }
                 }
@@ -391,12 +405,12 @@ public:
     }
 
     /*****************************************************************************/
-    void addLibrary(void* buf, size_t buflen)
+    override void addLibrary(void* buf, size_t buflen)
     {
         addObject(null, buf, buflen);
     }
 
-    void write()
+    override void write()
     {
         if (global.params.verbose)
             fprintf(global.stdmsg, "library   %s\n", libfile.name.toChars());
@@ -432,25 +446,13 @@ private:
         {
             printf("LibMSCoff::scanObjModule(%s)\n", om.name);
         }
-        struct Context
+
+        void addSymbol(char* name, int pickAny)
         {
-            LibMSCoff lib;
-            MSCoffObjModule* om;
-
-            extern (D) this(LibMSCoff lib, MSCoffObjModule* om)
-            {
-                this.lib = lib;
-                this.om = om;
-            }
-
-            extern (C++) static void addSymbol(void* pctx, char* name, int pickAny)
-            {
-                (cast(Context*)pctx).lib.addSymbol((cast(Context*)pctx).om, name, pickAny);
-            }
+            this.addSymbol(om, name, pickAny);
         }
 
-        auto ctx = Context(this, om);
-        scanMSCoffObjModule(&ctx, &Context.addSymbol, om.base, om.length, om.name, loc);
+        scanMSCoffObjModule(&addSymbol, om.base, om.length, om.name, loc);
     }
 
     /*****************************************************************************/

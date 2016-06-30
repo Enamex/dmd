@@ -6493,11 +6493,26 @@ label:
 static assert(bug8865());
 
 /******************************************************/
+// 15450 labeled foreach + continue/break
+
+static assert({
+  L1:
+    foreach (l; [0])
+        continue L1;
+
+  L2:
+    foreach (l; [0])
+        break L2;
+
+    return true;
+}());
 
 struct Test75
 {
     this(int) pure {}
 }
+
+/******************************************************/
 
 static assert( __traits(compiles, { static shared(Test75*)   t75 = new shared(Test75)(0);    return t75; }));
 static assert( __traits(compiles, { static shared(Test75)*   t75 = new shared(Test75)(0);    return t75; }));
@@ -6708,7 +6723,7 @@ static assert(test11510());
 
 struct MultiArray11534
 {
-    this(size_t[] sizes...)
+    void set(size_t[] sizes...)
     {
         storage = new size_t[5];
     }
@@ -6721,7 +6736,8 @@ struct MultiArray11534
 }
 
 enum test11534 = () {
-    auto m = MultiArray11534(3,2,1);
+    auto m = MultiArray11534();
+    m.set(3,2,1);
     auto start = m.raw_ptr;   //this trigger the bug
     //auto start = m.storage.ptr + 1; //this obviously works
     return 0;
@@ -7652,3 +7668,66 @@ auto structInCaseScope()
 }
 
 static assert(!structInCaseScope());
+
+/**************************************************
+    15233 - ICE in TupleExp, Copy On Write bug
+**************************************************/
+
+alias TT15233(stuff ...) = stuff;
+
+struct Tok15233 {}
+enum tup15233 = TT15233!(Tok15233(), "foo");
+static assert(tup15233[0] == Tok15233());
+static assert(tup15233[1] == "foo");
+
+/**************************************************
+    15251 - void cast in ForStatement.increment
+**************************************************/
+
+int test15251()
+{
+    for (ubyte lwr = 19;
+        lwr != 20;
+        cast(void)++lwr)    // have to to be evaluated with ctfeNeedNothing
+    {}
+    return 1;
+}
+static assert(test15251());
+
+/**************************************************
+    15998 - Sagfault caused by memory corruption
+**************************************************/
+
+immutable string[2] foo15998 = ["",""];
+immutable string[2][] bar15998a = foo15998 ~ baz15998;
+immutable string[2][] bar15998b = baz15998 ~ foo15998;
+
+auto baz15998()
+{
+    immutable(string[2])[] r;
+    return r;
+}
+
+static assert(bar15998a == [["", ""]]);
+static assert(bar15998b == [["", ""]]);
+
+/**************************************************
+    16094 - Non-overlapped slice assignment on an aggregate
+**************************************************/
+
+char[] f16094a()
+{
+    char[] x = new char[](6);
+    x[3..6] = x[0..3];
+    return x;
+}
+
+int[] f16094b()
+{
+    int[] x = new int[](6);
+    x[3..6] = x[0..3];
+    return x;
+}
+
+enum copy16094a = f16094a();
+enum copy16094b = f16094b();

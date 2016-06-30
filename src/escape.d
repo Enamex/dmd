@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -24,14 +24,17 @@ import ddmd.visitor;
 /************************************
  * Detect cases where pointers to the stack can 'escape' the
  * lifetime of the stack frame.
+ * Print error messages when these are detected.
  * Params:
- *      gag     do not print error messages
+ *      sc = used to determine current function and module
+ *      e = expression to check
+ *      gag = do not print error messages
  * Returns:
- *      true    errors occured
+ *      true if pointers to the stack can escape
  */
-extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
+bool checkEscape(Scope* sc, Expression e, bool gag)
 {
-    //printf("[%s] checkEscape, e = %s\n", e->loc.toChars(), e->toChars());
+    //printf("[%s] checkEscape, e = %s\n", e.loc.toChars(), e.toChars());
     extern (C++) final class EscapeVisitor : Visitor
     {
         alias visit = super.visit;
@@ -44,7 +47,6 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
         {
             this.sc = sc;
             this.gag = gag;
-            this.result = false;
         }
 
         void error(Loc loc, const(char)* format, Dsymbol s)
@@ -66,21 +68,21 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(Expression e)
+        override void visit(Expression e)
         {
         }
 
-        void visit(AddrExp e)
+        override void visit(AddrExp e)
         {
             result |= checkEscapeRef(sc, e.e1, gag);
         }
 
-        void visit(SymOffExp e)
+        override void visit(SymOffExp e)
         {
             check(e.loc, e.var);
         }
 
-        void visit(VarExp e)
+        override void visit(VarExp e)
         {
             VarDeclaration v = e.var.isVarDeclaration();
             if (v)
@@ -94,7 +96,7 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
                      */
                     if (tb.ty == Tarray || tb.ty == Tsarray || tb.ty == Tclass || tb.ty == Tdelegate)
                     {
-                        if ((!v.noscope || tb.ty == Tclass))
+                        if (v.needsScopeDtor() || tb.ty == Tclass)
                         {
                             error(e.loc, "escaping reference to scope local %s", v);
                             return;
@@ -109,7 +111,7 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(TupleExp e)
+        override void visit(TupleExp e)
         {
             for (size_t i = 0; i < e.exps.dim; i++)
             {
@@ -117,19 +119,24 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(ArrayLiteralExp e)
+        override void visit(ArrayLiteralExp e)
         {
             Type tb = e.type.toBasetype();
             if (tb.ty == Tsarray || tb.ty == Tarray)
             {
+                if (e.basis)
+                    e.basis.accept(this);
                 for (size_t i = 0; i < e.elements.dim; i++)
                 {
-                    (*e.elements)[i].accept(this);
+                    auto el = (*e.elements)[i];
+                    if (!el)
+                        continue;
+                    el.accept(this);
                 }
             }
         }
 
-        void visit(StructLiteralExp e)
+        override void visit(StructLiteralExp e)
         {
             if (e.elements)
             {
@@ -142,7 +149,7 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(NewExp e)
+        override void visit(NewExp e)
         {
             Type tb = e.newtype.toBasetype();
             if (tb.ty == Tstruct && !e.member && e.arguments)
@@ -156,7 +163,7 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(CastExp e)
+        override void visit(CastExp e)
         {
             Type tb = e.type.toBasetype();
             if (tb.ty == Tarray && e.e1.type.toBasetype().ty == Tsarray)
@@ -165,7 +172,7 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(SliceExp e)
+        override void visit(SliceExp e)
         {
             if (e.e1.op == TOKvar)
             {
@@ -189,7 +196,7 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
                 e.e1.accept(this);
         }
 
-        void visit(BinExp e)
+        override void visit(BinExp e)
         {
             Type tb = e.type.toBasetype();
             if (tb.ty == Tpointer)
@@ -199,22 +206,22 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(BinAssignExp e)
+        override void visit(BinAssignExp e)
         {
             e.e2.accept(this);
         }
 
-        void visit(AssignExp e)
+        override void visit(AssignExp e)
         {
             e.e2.accept(this);
         }
 
-        void visit(CommaExp e)
+        override void visit(CommaExp e)
         {
             e.e2.accept(this);
         }
 
-        void visit(CondExp e)
+        override void visit(CondExp e)
         {
             e.e1.accept(this);
             e.e2.accept(this);
@@ -229,14 +236,17 @@ extern (C++) bool checkEscape(Scope* sc, Expression e, bool gag)
 /************************************
  * Detect cases where returning 'e' by ref can result in a reference to the stack
  * being returned.
+ * Print error messages when these are detected.
  * Params:
- *      gag     do not print error messages
+ *      sc = used to determine current function and module
+ *      e = expression to check
+ *      gag = do not print error messages
  * Returns:
- *      true    errors occured
+ *      true if referencess to the stack can escape
  */
-extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
+bool checkEscapeRef(Scope* sc, Expression e, bool gag)
 {
-    //printf("[%s] checkEscapeRef, e = %s\n", e->loc.toChars(), e->toChars());
+    //printf("[%s] checkEscapeRef, e = %s\n", e.loc.toChars(), e.toChars());
     extern (C++) final class EscapeRefVisitor : Visitor
     {
         alias visit = super.visit;
@@ -249,7 +259,6 @@ extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
         {
             this.sc = sc;
             this.gag = gag;
-            this.result = false;
         }
 
         void error(Loc loc, const(char)* format, RootObject o)
@@ -276,7 +285,7 @@ extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
                 {
                     if (sc.func.flags & FUNCFLAGreturnInprocess)
                     {
-                        //printf("inferring 'return' for variable '%s'\n", v->toChars());
+                        //printf("inferring 'return' for variable '%s'\n", v.toChars());
                         v.storage_class |= STCreturn;
                         if (v == sc.func.vthis)
                         {
@@ -290,8 +299,8 @@ extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
                     }
                     else if (sc._module && sc._module.isRoot())
                     {
-                        //printf("escaping reference to local ref variable %s\n", v->toChars());
-                        //printf("storage class = x%llx\n", v->storage_class);
+                        //printf("escaping reference to local ref variable %s\n", v.toChars());
+                        //printf("storage class = x%llx\n", v.storage_class);
                         error(loc, "escaping reference to local ref variable %s", v);
                     }
                     return;
@@ -310,27 +319,27 @@ extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(Expression e)
+        override void visit(Expression e)
         {
         }
 
-        void visit(VarExp e)
+        override void visit(VarExp e)
         {
             check(e.loc, e.var);
         }
 
-        void visit(ThisExp e)
+        override void visit(ThisExp e)
         {
             if (e.var)
                 check(e.loc, e.var);
         }
 
-        void visit(PtrExp e)
+        override void visit(PtrExp e)
         {
             result |= checkEscape(sc, e.e1, gag);
         }
 
-        void visit(IndexExp e)
+        override void visit(IndexExp e)
         {
             if (e.e1.op == TOKvar)
             {
@@ -355,7 +364,7 @@ extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
             }
         }
 
-        void visit(DotVarExp e)
+        override void visit(DotVarExp e)
         {
             Type t1b = e.e1.type.toBasetype();
             if (t1b.ty == Tclass)
@@ -364,28 +373,28 @@ extern (C++) bool checkEscapeRef(Scope* sc, Expression e, bool gag)
                 e.e1.accept(this);
         }
 
-        void visit(BinAssignExp e)
+        override void visit(BinAssignExp e)
         {
             e.e1.accept(this);
         }
 
-        void visit(AssignExp e)
+        override void visit(AssignExp e)
         {
             e.e1.accept(this);
         }
 
-        void visit(CommaExp e)
+        override void visit(CommaExp e)
         {
             e.e2.accept(this);
         }
 
-        void visit(CondExp e)
+        override void visit(CondExp e)
         {
             e.e1.accept(this);
             e.e2.accept(this);
         }
 
-        void visit(CallExp e)
+        override void visit(CallExp e)
         {
             /* If the function returns by ref, check each argument that is
              * passed as 'return ref'.

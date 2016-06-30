@@ -21,7 +21,6 @@
 
 #include        "obj.h"
 
-#ifdef DEBUG
 extern char debuga;            /* cg - watch assignaddr()              */
 extern char debugb;            /* watch block optimization             */
 extern char debugc;            /* watch code generated                 */
@@ -37,22 +36,6 @@ extern char debugu;
 extern char debugw;            /* watch progress                       */
 extern char debugx;            /* suppress predefined CPP stuff        */
 extern char debugy;            /* watch output to il buffer            */
-#else
-#define debuga 0
-//#define debugb 0
-//#define debugc 0
-#define debugd 0
-#define debuge 0
-//#define debugf 0
-#define debugg 0
-#define debugo 0
-//#define debugr 0
-#define debugs 0
-#define debugt 0
-#define debugu 0
-//#define debugw 0
-//#define debugy 0
-#endif /* DEBUG */
 
 #define CR '\r'                 // Used because the MPW version of the compiler warps
 #define LF '\n'                 // \n into \r and \r into \n.  The translator version
@@ -96,9 +79,6 @@ extern block *block_last;
 extern int errcnt;
 extern regm_t fregsaved;
 
-#if SCPP
-extern targ_size_t dsout;              /* # of bytes actually output to data */
-#endif
 extern tym_t pointertype;              /* default data pointer type */
 
 // cg.c
@@ -322,13 +302,10 @@ int os_critsecsize32();
 int os_critsecsize64();
 #endif
 
-#ifdef PSEUDO_REGS
 /* pseudo.c */
 Symbol *pseudo_declar(char *);
-
 extern unsigned char pseudoreg[];
 extern regm_t pseudomask[];
-#endif /* PSEUDO_REGS */
 
 /* Symbol.c */
 symbol **symtab_realloc(symbol **tab, size_t symmax);
@@ -340,15 +317,13 @@ void symbol_keep(Symbol *s);
 #else
 #define symbol_keep(s) ((void)(s))
 #endif
-#ifdef DEBUG
 void symbol_print(Symbol *s);
-#else
-#define symbol_print(s)
-#endif
 void symbol_term(void);
 char *symbol_ident(symbol *s);
 Symbol *symbol_calloc(const char *id);
+Symbol *symbol_calloc(const char *id, size_t len);
 Symbol *symbol_name(const char *name, int sclass, type *t);
+Symbol *symbol_name(const char *name, size_t len, int sclass, type *t);
 Symbol *symbol_generate(int sclass, type *t);
 Symbol *symbol_genauto(type *t);
 Symbol *symbol_genauto(elem *e);
@@ -372,9 +347,7 @@ SYMIDX symbol_add(Symbol *s);
 void freesymtab(Symbol **stab, SYMIDX n1, SYMIDX n2);
 Symbol * symbol_copy(Symbol *s);
 Symbol * symbol_searchlist(symlist_t sl, const char *vident);
-void slist_add(Symbol *s);
-void slist_reset();
-
+void symbol_reset(Symbol *s);
 
 #if TX86
 // cg87.c
@@ -445,8 +418,6 @@ void compdfo(void);
 
 #define block_initvar(s) (curblock->Binitvar = (s))
 
-#ifdef DEBUG
-
 /* debug.c */
 extern const char *regstring[];
 
@@ -462,21 +433,6 @@ void WRfunc();
 void WRdefnod();
 void WRFL(enum FL);
 char *sym_ident(SYMIDX si);
-
-#else
-#define WRclass(sc)
-#define WRTYxx(ty)
-#define WROP(oper)
-#define WRBC(bc)
-#define WRarglst(a)
-#define WRblock(b)
-#define WRblocklist(bl)
-#define WReqn(e)
-#define WRfunc()
-#define WRdefnod()
-#define WRFL(fl)
-#define sym_ident(si)
-#endif
 
 /* cgelem.c     */
 elem *doptelem(elem *, goal_t);
@@ -527,12 +483,14 @@ void rtlsym_init();
 void rtlsym_reset();
 void rtlsym_term();
 
+// compress.c
+char *id_compress(char *id, int idlen, size_t *plen);
+
 // Dwarf
 void dwarf_CFA_set_loc(size_t location);
 void dwarf_CFA_set_reg_offset(int reg, int offset);
 void dwarf_CFA_offset(int reg, int offset);
 void dwarf_CFA_args_size(size_t sz);
-
 
 #if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
 elem * exp_isconst();
@@ -543,4 +501,3 @@ int  lnx_attributes(int hinttype,const void *hint, type **ptyp, tym_t *ptym,int 
 #endif
 
 #endif /* GLOBAL_H */
-

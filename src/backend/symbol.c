@@ -110,10 +110,9 @@ void symtab_free(symbol **tab)
  * Type out symbol information.
  */
 
-#ifdef DEBUG
-
 void symbol_print(symbol *s)
 {
+#ifdef DEBUG
 #if !SPP
     if (!s) return;
     dbg_printf("symbol %p '%s'\n ",s,s->Sident);
@@ -152,9 +151,9 @@ void symbol_print(symbol *s)
     }
 #endif
 #endif
+#endif
 }
 
-#endif
 
 /*********************************
  * Terminate use of symbol table.
@@ -264,11 +263,14 @@ char *symbol_ident(symbol *s)
  */
 
 symbol * symbol_calloc(const char *id)
-{   symbol *s;
-    int len;
+{
+    return symbol_calloc(id, strlen(id));
+}
 
-    len = strlen(id);
-    //printf("sizeof(symbol)=%d, sizeof(s->Sident)=%d, len=%d\n",sizeof(symbol),sizeof(s->Sident),len);
+symbol * symbol_calloc(const char *id, size_t len)
+{   symbol *s;
+
+    //printf("sizeof(symbol)=%d, sizeof(s->Sident)=%d, len=%d\n",sizeof(symbol),sizeof(s->Sident),(int)len);
     s = (symbol *) mem_fmalloc(sizeof(symbol) - sizeof(s->Sident) + len + 1 + 5);
     memset(s,0,sizeof(symbol) - sizeof(s->Sident));
 #if SCPP
@@ -292,8 +294,13 @@ symbol * symbol_calloc(const char *id)
 
 symbol * symbol_name(const char *name,int sclass,type *t)
 {
+    return symbol_name(name, strlen(name), sclass, t);
+}
+
+symbol * symbol_name(const char *name, size_t len, int sclass, type *t)
+{
     type_debug(t);
-    symbol *s = symbol_calloc(name);
+    symbol *s = symbol_calloc(name, len);
     s->Sclass = (enum SC) sclass;
     s->Stype = t;
     s->Stype->Tcount++;
@@ -835,6 +842,7 @@ void symbol_free(symbol *s)
                 list_free(&f->Fthunks,(list_free_fp)symbol_free);
               }
                 list_free(&f->Fsymtree,(list_free_fp)symbol_free);
+                free(f->typesTable);
                 func_free(f);
             }
             switch (s->Sclass)
@@ -1080,7 +1088,11 @@ symbol * symbol_copy(symbol *s)
     scopy->Sl = scopy->Sr = scopy->Snext = NULL;
     scopy->Ssymnum = -1;
     if (scopy->Sdt)
-        dtsymsize(scopy);
+    {
+        DtBuilder dtb;
+        dtb.nzeros(type_size(scopy->Stype));
+        scopy->Sdt = dtb.finish();
+    }
     if (scopy->Sflags & (SFLvalue | SFLdtorexp))
         scopy->Svalue = el_copytree(s->Svalue);
     t = scopy->Stype;
@@ -2269,43 +2281,20 @@ void symbol_gendebuginfo()
 
 #endif
 
-/************************************
- * Add symbol to global slist, which are symbols we need to keep around
- * for next obj file to be created.
- */
-
-static Symbol **slist;
-static size_t slist_length;
-
-void slist_add(Symbol *s)
-{
-    slist = (Symbol **)realloc(slist, (slist_length + 1) * sizeof(Symbol *));
-    slist[slist_length++] = s;
-}
-
 /*************************************
- * Resets Symbols so they are now "externs" to the next obj file being created.
+ * Reset Symbol so that it's now an "extern" to the next obj file being created.
  */
-
-void slist_reset()
+void symbol_reset(Symbol *s)
 {
-    //printf("slist_reset()\n");
-    for (size_t i = 0; i < slist_length; ++i)
-    {
-        Symbol *s = slist[i];
-
-        s->Soffset = 0;
-        s->Sxtrnnum = 0;
-        s->Stypidx = 0;
-        s->Sflags &= ~(STRoutdef | SFLweak);
-        if (s->Sclass == SCglobal || s->Sclass == SCcomdat ||
-            s->Sfl == FLudata || s->Sclass == SCstatic)
-        {   s->Sclass = SCextern;
-            s->Sfl = FLextern;
-        }
+    s->Soffset = 0;
+    s->Sxtrnnum = 0;
+    s->Stypidx = 0;
+    s->Sflags &= ~(STRoutdef | SFLweak);
+    if (s->Sclass == SCglobal || s->Sclass == SCcomdat ||
+        s->Sfl == FLudata || s->Sclass == SCstatic)
+    {   s->Sclass = SCextern;
+        s->Sfl = FLextern;
     }
 }
-
-
 
 #endif /* !SPP */

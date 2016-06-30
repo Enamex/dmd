@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -13,21 +13,18 @@ import ddmd.arraytypes;
 import ddmd.dscope;
 import ddmd.dsymbol;
 import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.identifier;
-import ddmd.root.outbuffer;
 import ddmd.visitor;
+import core.stdc.stdio;
 
 private enum LOG = false;
 
-/* A namespace corresponding to a C++ namespace.
+/***********************************************************
+ * A namespace corresponding to a C++ namespace.
  * Implies extern(C++).
  */
 extern (C++) final class Nspace : ScopeDsymbol
 {
-public:
-    /* This implements namespaces.
-     */
     extern (D) this(Loc loc, Identifier ident, Dsymbols* members)
     {
         super(ident);
@@ -36,13 +33,60 @@ public:
         this.members = members;
     }
 
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         auto ns = new Nspace(loc, ident, null);
         return ScopeDsymbol.syntaxCopy(ns);
     }
 
-    void semantic(Scope* sc)
+    override void addMember(Scope* sc, ScopeDsymbol sds)
+    {
+        ScopeDsymbol.addMember(sc, sds);
+        if (members)
+        {
+            if (!symtab)
+                symtab = new DsymbolTable();
+            // The namespace becomes 'imported' into the enclosing scope
+            for (Scope* sce = sc; 1; sce = sce.enclosing)
+            {
+                ScopeDsymbol sds2 = sce.scopesym;
+                if (sds2)
+                {
+                    sds2.importScope(this, Prot(PROTpublic));
+                    break;
+                }
+            }
+            assert(sc);
+            sc = sc.push(this);
+            sc.linkage = LINKcpp; // namespaces default to C++ linkage
+            sc.parent = this;
+            foreach (s; *members)
+            {
+                //printf("add %s to scope %s\n", s->toChars(), toChars());
+                s.addMember(sc, this);
+            }
+            sc.pop();
+        }
+    }
+
+    override void setScope(Scope* sc)
+    {
+        ScopeDsymbol.setScope(sc);
+        if (members)
+        {
+            assert(sc);
+            sc = sc.push(this);
+            sc.linkage = LINKcpp; // namespaces default to C++ linkage
+            sc.parent = this;
+            foreach (s; *members)
+            {
+                s.setScope(sc);
+            }
+            sc.pop();
+        }
+    }
+
+    override void semantic(Scope* sc)
     {
         if (semanticRun >= PASSsemantic)
             return;
@@ -59,41 +103,16 @@ public:
         parent = sc.parent;
         if (members)
         {
-            if (!symtab)
-                symtab = new DsymbolTable();
-            // The namespace becomes 'imported' into the enclosing scope
-            for (Scope* sce = sc; 1; sce = sce.enclosing)
-            {
-                ScopeDsymbol sds = cast(ScopeDsymbol)sce.scopesym;
-                if (sds)
-                {
-                    sds.importScope(this, Prot(PROTpublic));
-                    break;
-                }
-            }
             assert(sc);
             sc = sc.push(this);
             sc.linkage = LINKcpp; // note that namespaces imply C++ linkage
             sc.parent = this;
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
-                //printf("add %s to scope %s\n", s->toChars(), toChars());
-                s.addMember(sc, this);
-            }
-            for (size_t i = 0; i < members.dim; i++)
-            {
-                Dsymbol s = (*members)[i];
-                s.setScope(sc);
-            }
-            for (size_t i = 0; i < members.dim; i++)
-            {
-                Dsymbol s = (*members)[i];
                 s.importAll(sc);
             }
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
                 static if (LOG)
                 {
                     printf("\tmember '%s', kind = '%s'\n", s.toChars(), s.kind());
@@ -108,7 +127,7 @@ public:
         }
     }
 
-    void semantic2(Scope* sc)
+    override void semantic2(Scope* sc)
     {
         if (semanticRun >= PASSsemantic2)
             return;
@@ -122,9 +141,8 @@ public:
             assert(sc);
             sc = sc.push(this);
             sc.linkage = LINKcpp;
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
                 static if (LOG)
                 {
                     printf("\tmember '%s', kind = '%s'\n", s.toChars(), s.kind());
@@ -139,7 +157,7 @@ public:
         }
     }
 
-    void semantic3(Scope* sc)
+    override void semantic3(Scope* sc)
     {
         if (semanticRun >= PASSsemantic3)
             return;
@@ -152,27 +170,40 @@ public:
         {
             sc = sc.push(this);
             sc.linkage = LINKcpp;
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
                 s.semantic3(sc);
             }
             sc.pop();
         }
     }
 
-    bool oneMember(Dsymbol* ps, Identifier ident)
+    override bool oneMember(Dsymbol* ps, Identifier ident)
     {
         return Dsymbol.oneMember(ps, ident);
     }
 
-    int apply(Dsymbol_apply_ft_t fp, void* param)
+    override final Dsymbol search(Loc loc, Identifier ident, int flags = SearchLocalsOnly)
+    {
+        //printf("%s.Nspace.search('%s')\n", toChars(), ident.toChars());
+        if (_scope && !symtab)
+            semantic(_scope);
+
+        if (!members || !symtab) // opaque or semantic() is not yet called
+        {
+            error("is forward referenced when looking for '%s'", ident.toChars());
+            return null;
+        }
+
+        return ScopeDsymbol.search(loc, ident, flags);
+    }
+
+    override int apply(Dsymbol_apply_ft_t fp, void* param)
     {
         if (members)
         {
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
                 if (s)
                 {
                     if (s.apply(fp, param))
@@ -183,14 +214,13 @@ public:
         return 0;
     }
 
-    bool hasPointers()
+    override bool hasPointers()
     {
         //printf("Nspace::hasPointers() %s\n", toChars());
         if (members)
         {
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
                 //printf(" s = %s %s\n", s->kind(), s->toChars());
                 if (s.hasPointers())
                 {
@@ -201,33 +231,32 @@ public:
         return false;
     }
 
-    void setFieldOffset(AggregateDeclaration ad, uint* poffset, bool isunion)
+    override void setFieldOffset(AggregateDeclaration ad, uint* poffset, bool isunion)
     {
         //printf("Nspace::setFieldOffset() %s\n", toChars());
         if (_scope) // if fwd reference
             semantic(null); // try to resolve it
         if (members)
         {
-            for (size_t i = 0; i < members.dim; i++)
+            foreach (s; *members)
             {
-                Dsymbol s = (*members)[i];
                 //printf("\t%s\n", s->toChars());
                 s.setFieldOffset(ad, poffset, isunion);
             }
         }
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "namespace";
     }
 
-    Nspace isNspace()
+    override inout(Nspace) isNspace() inout
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }

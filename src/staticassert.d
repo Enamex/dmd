@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -13,21 +13,18 @@ import ddmd.dsymbol;
 import ddmd.errors;
 import ddmd.expression;
 import ddmd.globals;
-import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.id;
 import ddmd.identifier;
 import ddmd.mtype;
-import ddmd.root.outbuffer;
 import ddmd.visitor;
 
+/***********************************************************
+ */
 extern (C++) final class StaticAssert : Dsymbol
 {
-public:
     Expression exp;
     Expression msg;
 
-    /********************************* AttribDeclaration ****************************/
     extern (D) this(Loc loc, Expression exp, Expression msg)
     {
         super(Id.empty);
@@ -36,22 +33,22 @@ public:
         this.msg = msg;
     }
 
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
         return new StaticAssert(loc, exp.syntaxCopy(), msg ? msg.syntaxCopy() : null);
     }
 
-    void addMember(Scope* sc, ScopeDsymbol sds)
+    override void addMember(Scope* sc, ScopeDsymbol sds)
     {
         // we didn't add anything
     }
 
-    void semantic(Scope* sc)
+    override void semantic(Scope* sc)
     {
     }
 
-    void semantic2(Scope* sc)
+    override void semantic2(Scope* sc)
     {
         //printf("StaticAssert::semantic2() %s\n", toChars());
         auto sds = new ScopeDsymbol();
@@ -91,7 +88,7 @@ public:
                 {
                     // same with pragma(msg)
                     se = se.toUTF8(sc);
-                    error("\"%.*s\"", cast(int)se.len, cast(char*)se.string);
+                    error("\"%.*s\"", cast(int)se.len, se.string);
                 }
                 else
                     error("%s", msg.toChars());
@@ -109,19 +106,19 @@ public:
         }
     }
 
-    bool oneMember(Dsymbol* ps, Identifier ident)
+    override bool oneMember(Dsymbol* ps, Identifier ident)
     {
         //printf("StaticAssert::oneMember())\n");
         *ps = null;
         return true;
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "static assert";
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }

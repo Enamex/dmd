@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -15,27 +15,30 @@ import ddmd.dsymbol;
 import ddmd.func;
 import ddmd.identifier;
 import ddmd.statement;
-import ddmd.root.aav;
 import ddmd.globals;
 import ddmd.mtype;
-import ddmd.errors;
 
+extern (C++) struct Label;
+
+/***********************************************************
+ */
 struct IRState
 {
     IRState* prev;
     Statement statement;
-    Module m; // module
+    Module m;                       // module
     Dsymbol symbol;
     Identifier ident;
-    Symbol* shidden; // hidden parameter to function
-    Symbol* sthis; // 'this' parameter to function (member and nested)
-    Symbol* sclosure; // pointer to closure instance
+    Symbol* shidden;                // hidden parameter to function
+    Symbol* sthis;                  // 'this' parameter to function (member and nested)
+    Symbol* sclosure;               // pointer to closure instance
     Blockx* blx;
-    Dsymbols* deferToObj; // array of Dsymbol's to run toObjFile(bool multiobj) on later
-    elem* ehidden; // transmit hidden pointer to CallExp::toElem()
+    Dsymbols* deferToObj;           // array of Dsymbol's to run toObjFile(bool multiobj) on later
+    elem* ehidden;                  // transmit hidden pointer to CallExp::toElem()
     Symbol* startaddress;
-    VarDeclarations* varsInScope; // variables that are in scope that will need destruction later
-    AA** labels; // table of labels used/declared in function
+    VarDeclarations* varsInScope;   // variables that are in scope that will need destruction later
+    Label*[void*]* labels;          // table of labels used/declared in function
+
     block* breakBlock;
     block* contBlock;
     block* switchBlock;
@@ -46,15 +49,6 @@ struct IRState
     {
         prev = irs;
         statement = s;
-        symbol = null;
-        breakBlock = null;
-        contBlock = null;
-        switchBlock = null;
-        defaultBlock = null;
-        finallyBlock = null;
-        ident = null;
-        ehidden = null;
-        startaddress = null;
         if (irs)
         {
             m = irs.m;
@@ -65,33 +59,13 @@ struct IRState
             deferToObj = irs.deferToObj;
             varsInScope = irs.varsInScope;
             labels = irs.labels;
-        }
-        else
-        {
-            m = null;
-            shidden = null;
-            sclosure = null;
-            sthis = null;
-            blx = null;
-            deferToObj = null;
-            varsInScope = null;
-            labels = null;
         }
     }
 
     extern (D) this(IRState* irs, Dsymbol s)
     {
         prev = irs;
-        statement = null;
         symbol = s;
-        breakBlock = null;
-        contBlock = null;
-        switchBlock = null;
-        defaultBlock = null;
-        finallyBlock = null;
-        ident = null;
-        ehidden = null;
-        startaddress = null;
         if (irs)
         {
             m = irs.m;
@@ -103,40 +77,35 @@ struct IRState
             varsInScope = irs.varsInScope;
             labels = irs.labels;
         }
-        else
-        {
-            m = null;
-            shidden = null;
-            sclosure = null;
-            sthis = null;
-            blx = null;
-            deferToObj = null;
-            varsInScope = null;
-            labels = null;
-        }
     }
 
     extern (D) this(Module m, Dsymbol s)
     {
-        prev = null;
-        statement = null;
         this.m = m;
         symbol = s;
-        breakBlock = null;
-        contBlock = null;
-        switchBlock = null;
-        defaultBlock = null;
-        finallyBlock = null;
-        ident = null;
-        ehidden = null;
-        shidden = null;
-        sclosure = null;
-        sthis = null;
-        blx = null;
-        deferToObj = null;
-        startaddress = null;
-        varsInScope = null;
-        labels = null;
+    }
+
+    /****
+     * Access labels AA from C++ code.
+     * Params:
+     *  s = key
+     * Returns:
+     *  pointer to value if it's there, null if not
+     */
+    extern (C++) Label** lookupLabel(Statement s)
+    {
+        return cast(void*)s in *labels;
+    }
+
+    /****
+     * Access labels AA from C++ code.
+     * Params:
+     *  s = key
+     *  label = value
+     */
+    extern (C++) void insertLabel(Statement s, Label* label)
+    {
+        (*labels)[cast(void*)s] = label;
     }
 
     extern (C++) block* getBreakBlock(Identifier ident)

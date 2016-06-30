@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -23,9 +23,9 @@ import ddmd.root.outbuffer;
 import ddmd.root.stringtable;
 import ddmd.root.filename;
 import ddmd.root.port;
-import ddmd.mars;
 import ddmd.scanelf;
 import ddmd.errors;
+import ddmd.utils;
 
 enum LOG = false;
 
@@ -40,7 +40,6 @@ alias ElfObjSymbols = Array!(ElfObjSymbol*);
 
 extern (C++) final class LibElf : Library
 {
-public:
     File* libfile;
     ElfObjModules objmodules; // ElfObjModule[]
     ElfObjSymbols objsymbols; // ElfObjSymbol[]
@@ -48,7 +47,6 @@ public:
 
     extern (D) this()
     {
-        libfile = null;
         tab._init(14000);
     }
 
@@ -57,7 +55,7 @@ public:
      * and the filename.
      * Add default library file name extension.
      */
-    void setFilename(const(char)* dir, const(char)* filename)
+    override void setFilename(const(char)* dir, const(char)* filename)
     {
         static if (LOG)
         {
@@ -86,7 +84,7 @@ public:
      * If the buffer is NULL, use module_name as the file name
      * and load the file.
      */
-    void addObject(const(char)* module_name, void* buf, size_t buflen)
+    override void addObject(const(char)* module_name, void* buf, size_t buflen)
     {
         if (!module_name)
             module_name = "";
@@ -277,16 +275,15 @@ public:
                     if (m == objmodules.dim)
                     {
                         reason = __LINE__;
-                        goto Lcorrupt;
-                        // didn't find it
+                        goto Lcorrupt; // didn't find it
                     }
                     ElfObjModule* om = objmodules[m];
                     //printf("\t%x\n", (char *)om->base - (char *)buf);
                     if (moff + ElfLibHeader.sizeof == cast(char*)om.base - cast(char*)buf)
                     {
                         addSymbol(om, name, 1);
-                        //                  if (mstart == m)
-                        //                      mstart++;
+                        //if (mstart == m)
+                        //    mstart++;
                         break;
                     }
                 }
@@ -339,12 +336,12 @@ public:
     }
 
     /*****************************************************************************/
-    void addLibrary(void* buf, size_t buflen)
+    override void addLibrary(void* buf, size_t buflen)
     {
         addObject(null, buf, buflen);
     }
 
-    void write()
+    override void write()
     {
         if (global.params.verbose)
             fprintf(global.stdmsg, "library   %s\n", libfile.name.toChars());
@@ -363,7 +360,7 @@ public:
         {
             printf("LibElf::addSymbol(%s, %s, %d)\n", om.name, name, pickAny);
         }
-        StringValue* s = tab.insert(name, strlen(name));
+        StringValue* s = tab.insert(name, strlen(name), null);
         if (!s)
         {
             // already in table
@@ -396,25 +393,13 @@ private:
         {
             printf("LibElf::scanObjModule(%s)\n", om.name);
         }
-        struct Context
+
+        void addSymbol(char* name, int pickAny)
         {
-            LibElf lib;
-            ElfObjModule* om;
-
-            extern (D) this(LibElf lib, ElfObjModule* om)
-            {
-                this.lib = lib;
-                this.om = om;
-            }
-
-            extern (C++) static void addSymbol(void* pctx, char* name, int pickAny)
-            {
-                (cast(Context*)pctx).lib.addSymbol((cast(Context*)pctx).om, name, pickAny);
-            }
+            this.addSymbol(om, name, pickAny);
         }
 
-        auto ctx = Context(this, om);
-        scanElfObjModule(&ctx, &Context.addSymbol, om.base, om.length, om.name, loc);
+        scanElfObjModule(&addSymbol, om.base, om.length, om.name, loc);
     }
 
     /*****************************************************************************/

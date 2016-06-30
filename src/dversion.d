@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -11,25 +11,22 @@ module ddmd.dversion;
 import ddmd.arraytypes;
 import ddmd.cond;
 import ddmd.dmodule;
-import ddmd.dmodule;
 import ddmd.dscope;
 import ddmd.dsymbol;
 import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.identifier;
 import ddmd.root.outbuffer;
 import ddmd.visitor;
 
+/***********************************************************
+ * DebugSymbol's happen for statements like:
+ *      debug = identifier;
+ *      debug = integer;
+ */
 extern (C++) final class DebugSymbol : Dsymbol
 {
-public:
     uint level;
 
-    /* ================================================== */
-    /* DebugSymbol's happen for statements like:
-     *      debug = identifier;
-     *      debug = integer;
-     */
     extern (D) this(Loc loc, Identifier ident)
     {
         super(ident);
@@ -38,12 +35,11 @@ public:
 
     extern (D) this(Loc loc, uint level)
     {
-        super();
         this.level = level;
         this.loc = loc;
     }
 
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
         auto ds = new DebugSymbol(loc, ident);
@@ -51,7 +47,7 @@ public:
         return ds;
     }
 
-    char* toChars()
+    override const(char)* toChars() const
     {
         if (ident)
             return ident.toChars();
@@ -63,7 +59,7 @@ public:
         }
     }
 
-    void addMember(Scope* sc, ScopeDsymbol sds)
+    override void addMember(Scope* sc, ScopeDsymbol sds)
     {
         //printf("DebugSymbol::addMember('%s') %s\n", sds->toChars(), toChars());
         Module m = sds.isModule();
@@ -100,32 +96,31 @@ public:
         }
     }
 
-    void semantic(Scope* sc)
+    override void semantic(Scope* sc)
     {
         //printf("DebugSymbol::semantic() %s\n", toChars());
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "debug";
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ * VersionSymbol's happen for statements like:
+ *      version = identifier;
+ *      version = integer;
+ */
 extern (C++) final class VersionSymbol : Dsymbol
 {
-public:
     uint level;
 
-    /* ================================================== */
-    /* VersionSymbol's happen for statements like:
-     *      version = identifier;
-     *      version = integer;
-     */
     extern (D) this(Loc loc, Identifier ident)
     {
         super(ident);
@@ -134,12 +129,11 @@ public:
 
     extern (D) this(Loc loc, uint level)
     {
-        super();
         this.level = level;
         this.loc = loc;
     }
 
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
         auto ds = new VersionSymbol(loc, ident);
@@ -147,7 +141,7 @@ public:
         return ds;
     }
 
-    char* toChars()
+    override const(char)* toChars()
     {
         if (ident)
             return ident.toChars();
@@ -159,7 +153,7 @@ public:
         }
     }
 
-    void addMember(Scope* sc, ScopeDsymbol sds)
+    override void addMember(Scope* sc, ScopeDsymbol sds)
     {
         //printf("VersionSymbol::addMember('%s') %s\n", sds->toChars(), toChars());
         Module m = sds.isModule();
@@ -197,16 +191,16 @@ public:
         }
     }
 
-    void semantic(Scope* sc)
+    override void semantic(Scope* sc)
     {
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "version";
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }

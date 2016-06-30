@@ -1,16 +1,17 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the
+ * $(LINK2 http://www.dlang.org, D programming language).
+ *
+ * Copyright:   Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
+ * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:      $(DMDSRC _ctfeexpr.d)
+ */
 
 module ddmd.ctfeexpr;
 
 import core.stdc.stdio;
 import core.stdc.string;
-import ddmd.aggregate;
 import ddmd.arraytypes;
 import ddmd.complex;
 import ddmd.constfold;
@@ -23,44 +24,36 @@ import ddmd.errors;
 import ddmd.expression;
 import ddmd.func;
 import ddmd.globals;
-import ddmd.hdrgen;
-import ddmd.id;
 import ddmd.mtype;
-import ddmd.root.longdouble;
-import ddmd.root.outbuffer;
 import ddmd.root.port;
 import ddmd.root.rmem;
 import ddmd.target;
 import ddmd.tokens;
-import ddmd.utf;
 import ddmd.visitor;
 
-/**
- Global status of the CTFE engine. Mostly used for performance diagnostics
+/***********************************************************
+ * Global status of the CTFE engine. Mostly used for performance diagnostics
  */
 struct CtfeStatus
 {
-    /************** CtfeStatus ********************************************/
-    extern (C++) static __gshared int callDepth = 0; // current number of recursive calls
-    /* When printing a stack trace,
-     * suppress this number of calls
-     */
+    extern (C++) static __gshared int callDepth = 0;        // current number of recursive calls
+
+    // When printing a stack trace, suppress this number of calls
     extern (C++) static __gshared int stackTraceCallsToSuppress = 0;
-    extern (C++) static __gshared int maxCallDepth = 0; // highest number of recursive calls
-    extern (C++) static __gshared int numArrayAllocs = 0; // Number of allocated arrays
-    extern (C++) static __gshared int numAssignments = 0; // total number of assignments executed
+
+    extern (C++) static __gshared int maxCallDepth = 0;     // highest number of recursive calls
+    extern (C++) static __gshared int numArrayAllocs = 0;   // Number of allocated arrays
+    extern (C++) static __gshared int numAssignments = 0;   // total number of assignments executed
 }
 
-/**
- A reference to a class, or an interface. We need this when we
- point to a base class (we must record what the type is).
+/***********************************************************
+ * A reference to a class, or an interface. We need this when we
+ * point to a base class (we must record what the type is).
  */
 extern (C++) final class ClassReferenceExp : Expression
 {
-public:
     StructLiteralExp value;
 
-    /************** ClassReferenceExp ********************************************/
     extern (D) this(Loc loc, StructLiteralExp lit, Type type)
     {
         super(loc, TOKclassreference, __traits(classInstanceSize, ClassReferenceExp));
@@ -72,18 +65,6 @@ public:
     ClassDeclaration originalClass()
     {
         return value.sd.isClassDeclaration();
-    }
-
-    VarDeclaration getFieldAt(uint index)
-    {
-        ClassDeclaration cd = originalClass();
-        uint fieldsSoFar = 0;
-        while (index - fieldsSoFar >= cd.fields.dim)
-        {
-            fieldsSoFar += cd.fields.dim;
-            cd = cd.baseClass;
-        }
-        return cd.fields[index - fieldsSoFar];
     }
 
     // Return index of the field, or -1 if not found
@@ -129,20 +110,19 @@ public:
         return -1;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-/** An uninitialized value
+/***********************************************************
+ * An uninitialized value
  */
 extern (C++) final class VoidInitExp : Expression
 {
-public:
     VarDeclaration var;
 
-    /************** VoidInitExp ********************************************/
     extern (D) this(VarDeclaration var, Type type)
     {
         super(var.loc, TOKvoid, __traits(classInstanceSize, VoidInitExp));
@@ -150,12 +130,12 @@ public:
         this.type = var.type;
     }
 
-    char* toChars()
+    override const(char)* toChars() const
     {
-        return cast(char*)"void";
+        return "void";
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
@@ -173,15 +153,14 @@ extern (C++) int findFieldIndexByName(StructDeclaration sd, VarDeclaration v)
     return -1;
 }
 
-/** Fake class which holds the thrown exception.
- Used for implementing exception handling.
+/***********************************************************
+ * Fake class which holds the thrown exception.
+ * Used for implementing exception handling.
  */
 extern (C++) final class ThrownExceptionExp : Expression
 {
-public:
-    ClassReferenceExp thrown; // the thing being tossed
+    ClassReferenceExp thrown;   // the thing being tossed
 
-    /************** ThrownExceptionExp ********************************************/
     extern (D) this(Loc loc, ClassReferenceExp victim)
     {
         super(loc, TOKthrownexception, __traits(classInstanceSize, ThrownExceptionExp));
@@ -189,9 +168,9 @@ public:
         this.type = victim.type;
     }
 
-    char* toChars()
+    override const(char)* toChars() const
     {
-        return cast(char*)"CTFE ThrownException";
+        return "CTFE ThrownException";
     }
 
     // Generate an error message when this exception is not caught
@@ -208,44 +187,42 @@ public:
             errorSupplemental(loc, "thrown from here");
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
-/****************************************************************/
-// This type is only used by the interpreter.
+/***********************************************************
+ * This type is only used by the interpreter.
+ */
 extern (C++) final class CTFEExp : Expression
 {
-public:
     extern (D) this(TOK tok)
     {
         super(Loc(), tok, __traits(classInstanceSize, CTFEExp));
         type = Type.tvoid;
     }
 
-    char* toChars()
+    override const(char)* toChars() const
     {
         switch (op)
         {
         case TOKcantexp:
-            return cast(char*)"<cant>";
+            return "<cant>";
         case TOKvoidexp:
-            return cast(char*)"<void>";
+            return "<void>";
         case TOKbreak:
-            return cast(char*)"<break>";
+            return "<break>";
         case TOKcontinue:
-            return cast(char*)"<continue>";
+            return "<continue>";
         case TOKgoto:
-            return cast(char*)"<goto>";
+            return "<goto>";
         default:
             assert(0);
-            return null;
         }
     }
 
-    /********************** CTFEExp ******************************************/
     extern (C++) static __gshared CTFEExp cantexp;
     extern (C++) static __gshared CTFEExp voidexp;
     extern (C++) static __gshared CTFEExp breakexp;
@@ -307,7 +284,7 @@ extern (C++) bool needToCopyLiteral(Expression expr)
     }
 }
 
-extern (C++) Expressions* copyLiteralArray(Expressions* oldelems)
+extern (C++) Expressions* copyLiteralArray(Expressions* oldelems, Expression basis = null)
 {
     if (!oldelems)
         return oldelems;
@@ -315,7 +292,12 @@ extern (C++) Expressions* copyLiteralArray(Expressions* oldelems)
     auto newelems = new Expressions();
     newelems.setDim(oldelems.dim);
     for (size_t i = 0; i < oldelems.dim; i++)
-        (*newelems)[i] = copyLiteral((*oldelems)[i]).copy();
+    {
+        auto el = (*oldelems)[i];
+        if (!el)
+            el = basis;
+        (*newelems)[i] = copyLiteral(el).copy();
+    }
     return newelems;
 }
 
@@ -340,8 +322,12 @@ extern (C++) UnionExp copyLiteral(Expression e)
     }
     if (e.op == TOKarrayliteral)
     {
-        ArrayLiteralExp ae = cast(ArrayLiteralExp)e;
-        emplaceExp!(ArrayLiteralExp)(&ue, e.loc, copyLiteralArray(ae.elements));
+        auto ale = cast(ArrayLiteralExp)e;
+        auto basis = ale.basis ? copyLiteral(ale.basis).copy() : null;
+        auto elements = copyLiteralArray(ale.elements, ale.basis);
+
+        emplaceExp!(ArrayLiteralExp)(&ue, e.loc, elements);
+
         ArrayLiteralExp r = cast(ArrayLiteralExp)ue.exp();
         r.type = e.type;
         r.ownedByCtfe = OWNEDctfe;
@@ -362,32 +348,41 @@ extern (C++) UnionExp copyLiteral(Expression e)
          * case: block assignment is permitted inside struct literals, eg,
          * an int[4] array can be initialized with a single int.
          */
-        StructLiteralExp se = cast(StructLiteralExp)e;
-        Expressions* oldelems = se.elements;
+        auto sle = cast(StructLiteralExp)e;
+        auto oldelems = sle.elements;
         auto newelems = new Expressions();
         newelems.setDim(oldelems.dim);
-        for (size_t i = 0; i < newelems.dim; i++)
+        foreach (i, ref el; *newelems)
         {
-            Expression m = (*oldelems)[i];
             // We need the struct definition to detect block assignment
-            AggregateDeclaration sd = se.sd;
-            VarDeclaration v = sd.fields[i];
+            auto v = sle.sd.fields[i];
+            auto m = (*oldelems)[i];
+
             // If it is a void assignment, use the default initializer
             if (!m)
                 m = voidInitLiteral(v.type, v).copy();
-            if ((v.type.ty != m.type.ty) && v.type.ty == Tsarray)
+
+            if (v.type.ty == Tarray || v.type.ty == Taarray)
             {
-                // Block assignment from inside struct literals
-                TypeSArray tsa = cast(TypeSArray)v.type;
-                uinteger_t length = tsa.dim.toInteger();
-                m = createBlockDuplicatedArrayLiteral(e.loc, v.type, m, cast(size_t)length);
+                // Don't have to copy array references
             }
-            else if (v.type.ty != Tarray && v.type.ty != Taarray) // NOTE: do not copy array references
+            else
+            {
+                // Buzilla 15681: Copy the source element always.
                 m = copyLiteral(m).copy();
-            (*newelems)[i] = m;
+
+                // Block assignment from inside struct literals
+                if (v.type.ty != m.type.ty && v.type.ty == Tsarray)
+                {
+                    auto tsa = cast(TypeSArray)v.type;
+                    auto len = cast(size_t)tsa.dim.toInteger();
+                    m = createBlockDuplicatedArrayLiteral(e.loc, v.type, m, len);
+                }
+            }
+            el = m;
         }
-        emplaceExp!(StructLiteralExp)(&ue, e.loc, se.sd, newelems, se.stype);
-        StructLiteralExp r = cast(StructLiteralExp)ue.exp();
+        emplaceExp!(StructLiteralExp)(&ue, e.loc, sle.sd, newelems, sle.stype);
+        auto r = cast(StructLiteralExp)ue.exp();
         r.type = e.type;
         r.ownedByCtfe = OWNEDctfe;
         r.origin = (cast(StructLiteralExp)e).origin;
@@ -458,7 +453,6 @@ extern (C++) UnionExp copyLiteral(Expression e)
     }
     e.error("CTFE internal error: literal %s", e.toChars());
     assert(0);
-    return ue;
 }
 
 /* Deal with type painting.
@@ -572,27 +566,38 @@ extern (C++) uinteger_t resolveArrayLength(Expression e)
         return ale.keys.dim;
     }
     assert(0);
-    return 0;
 }
 
 /******************************
  * Helper for NewExp
  * Create an array literal consisting of 'elem' duplicated 'dim' times.
+ * Params:
+ *      loc = source location where the interpretation occurs
+ *      type = target type of the result
+ *      elem = the source of array element, it will be owned by the result
+ *      dim = element number of the result
+ * Returns:
+ *      Constructed ArrayLiteralExp
  */
 extern (C++) ArrayLiteralExp createBlockDuplicatedArrayLiteral(Loc loc, Type type, Expression elem, size_t dim)
 {
-    auto elements = new Expressions();
-    elements.setDim(dim);
-    bool mustCopy = needToCopyLiteral(elem);
     if (type.ty == Tsarray && type.nextOf().ty == Tsarray && elem.type.ty != Tsarray)
     {
         // If it is a multidimensional array literal, do it recursively
-        elem = createBlockDuplicatedArrayLiteral(loc, type.nextOf(), elem, cast(size_t)(cast(TypeSArray)type.nextOf()).dim.toInteger());
-        mustCopy = true;
+        auto tsa = cast(TypeSArray)type.nextOf();
+        auto len = cast(size_t)tsa.dim.toInteger();
+        elem = createBlockDuplicatedArrayLiteral(loc, type.nextOf(), elem, len);
     }
-    for (size_t i = 0; i < dim; i++)
+
+    // Buzilla 15681
+    auto tb = elem.type.toBasetype();
+    const mustCopy = tb.ty == Tstruct || tb.ty == Tsarray;
+
+    auto elements = new Expressions();
+    elements.setDim(dim);
+    foreach (i, ref el; *elements)
     {
-        (*elements)[i] = mustCopy ? copyLiteral(elem).copy() : elem;
+        el = mustCopy && i ? copyLiteral(elem).copy() : elem;
     }
     auto ale = new ArrayLiteralExp(loc, elements);
     ale.type = type;
@@ -604,10 +609,10 @@ extern (C++) ArrayLiteralExp createBlockDuplicatedArrayLiteral(Loc loc, Type typ
  * Helper for NewExp
  * Create a string literal consisting of 'value' duplicated 'dim' times.
  */
-extern (C++) StringExp createBlockDuplicatedStringLiteral(Loc loc, Type type, uint value, size_t dim, ubyte sz)
+extern (C++) StringExp createBlockDuplicatedStringLiteral(Loc loc, Type type, dchar value, size_t dim, ubyte sz)
 {
-    char* s = cast(char*)mem.xcalloc(dim + 1, sz);
-    for (size_t elemi = 0; elemi < dim; ++elemi)
+    auto s = cast(char*)mem.xcalloc(dim, sz);
+    foreach (elemi; 0 .. dim)
     {
         switch (sz)
         {
@@ -615,10 +620,10 @@ extern (C++) StringExp createBlockDuplicatedStringLiteral(Loc loc, Type type, ui
             s[elemi] = cast(char)value;
             break;
         case 2:
-            (cast(ushort*)s)[elemi] = cast(ushort)value;
+            (cast(wchar*)s)[elemi] = cast(wchar)value;
             break;
         case 4:
-            (cast(uint*)s)[elemi] = value;
+            (cast(dchar*)s)[elemi] = value;
             break;
         default:
             assert(0);
@@ -648,7 +653,6 @@ extern (C++) TypeAArray toBuiltinAAType(Type t)
     if (t.ty == Taarray)
         return cast(TypeAArray)t;
     assert(0);
-    return null;
 }
 
 /************** TypeInfo operations ************************************/
@@ -957,8 +961,7 @@ extern (C++) int comparePointers(Loc loc, TOK op, Type type, Expression agg1, di
             break;
         case TOKidentity:
         case TOKequal:
-        case TOKnotidentity:
-            // 'cmp' gets inverted below
+        case TOKnotidentity: // 'cmp' gets inverted below
         case TOKnotequal:
             cmp = (null1 == null2);
             break;
@@ -972,8 +975,7 @@ extern (C++) int comparePointers(Loc loc, TOK op, Type type, Expression agg1, di
         {
         case TOKidentity:
         case TOKequal:
-        case TOKnotidentity:
-            // 'cmp' gets inverted below
+        case TOKnotidentity: // 'cmp' gets inverted below
         case TOKnotequal:
             cmp = 0;
             break;
@@ -1002,207 +1004,6 @@ extern (C++) Expression paintFloatInt(Expression fromVal, Type to)
     return Target.paintAsType(fromVal, to);
 }
 
-/***********************************************
- Primitive integer operations
- ***********************************************/
-/**   e = OP e
- */
-extern (C++) void intUnary(TOK op, IntegerExp e)
-{
-    switch (op)
-    {
-    case TOKneg:
-        e.setInteger(-e.getInteger());
-        break;
-    case TOKtilde:
-        e.setInteger(~e.getInteger());
-        break;
-    default:
-        assert(0);
-        break;
-    }
-}
-
-/** dest = e1 OP e2;
- */
-extern (C++) void intBinary(TOK op, IntegerExp dest, Type type, IntegerExp e1, IntegerExp e2)
-{
-    dinteger_t result;
-    switch (op)
-    {
-    case TOKand:
-        result = e1.getInteger() & e2.getInteger();
-        break;
-    case TOKor:
-        result = e1.getInteger() | e2.getInteger();
-        break;
-    case TOKxor:
-        result = e1.getInteger() ^ e2.getInteger();
-        break;
-    case TOKadd:
-        result = e1.getInteger() + e2.getInteger();
-        break;
-    case TOKmin:
-        result = e1.getInteger() - e2.getInteger();
-        break;
-    case TOKmul:
-        result = e1.getInteger() * e2.getInteger();
-        break;
-    case TOKdiv:
-        {
-            sinteger_t n1 = e1.getInteger();
-            sinteger_t n2 = e2.getInteger();
-            if (n2 == 0)
-            {
-                e2.error("divide by 0");
-                result = 1;
-            }
-            else if (e1.type.isunsigned() || e2.type.isunsigned())
-                result = (cast(dinteger_t)n1) / (cast(dinteger_t)n2);
-            else
-                result = n1 / n2;
-            break;
-        }
-    case TOKmod:
-        {
-            sinteger_t n1 = e1.getInteger();
-            sinteger_t n2 = e2.getInteger();
-            if (n2 == 0)
-            {
-                e2.error("divide by 0");
-                n2 = 1;
-            }
-            if (n2 == -1 && !type.isunsigned())
-            {
-                // Check for int.min % -1
-                if (n1 == 0xFFFFFFFF80000000UL && type.toBasetype().ty != Tint64)
-                {
-                    e2.error("integer overflow: int.min % -1");
-                    n2 = 1;
-                }
-                else if (n1 == 0x8000000000000000L) // long.min % -1
-                {
-                    e2.error("integer overflow: long.min % -1");
-                    n2 = 1;
-                }
-            }
-            if (e1.type.isunsigned() || e2.type.isunsigned())
-                result = (cast(dinteger_t)n1) % (cast(dinteger_t)n2);
-            else
-                result = n1 % n2;
-            break;
-        }
-    case TOKpow:
-        {
-            dinteger_t n = e2.getInteger();
-            if (!e2.type.isunsigned() && cast(sinteger_t)n < 0)
-            {
-                e2.error("integer ^^ -integer: total loss of precision");
-                n = 1;
-            }
-            uinteger_t r = e1.getInteger();
-            result = 1;
-            while (n != 0)
-            {
-                if (n & 1)
-                    result = result * r;
-                n >>= 1;
-                r = r * r;
-            }
-            break;
-        }
-    case TOKshl:
-        result = e1.getInteger() << e2.getInteger();
-        break;
-    case TOKshr:
-        {
-            dinteger_t value = e1.getInteger();
-            dinteger_t dcount = e2.getInteger();
-            assert(dcount <= 0xFFFFFFFF);
-            uint count = cast(uint)dcount;
-            switch (e1.type.toBasetype().ty)
-            {
-            case Tint8:
-                result = cast(d_int8)value >> count;
-                break;
-            case Tuns8:
-            case Tchar:
-                result = cast(d_uns8)value >> count;
-                break;
-            case Tint16:
-                result = cast(d_int16)value >> count;
-                break;
-            case Tuns16:
-            case Twchar:
-                result = cast(d_uns16)value >> count;
-                break;
-            case Tint32:
-                result = cast(d_int32)value >> count;
-                break;
-            case Tuns32:
-            case Tdchar:
-                result = cast(d_uns32)value >> count;
-                break;
-            case Tint64:
-                result = cast(d_int64)value >> count;
-                break;
-            case Tuns64:
-                result = cast(d_uns64)value >> count;
-                break;
-            default:
-                assert(0);
-            }
-            break;
-        }
-    case TOKushr:
-        {
-            dinteger_t value = e1.getInteger();
-            dinteger_t dcount = e2.getInteger();
-            assert(dcount <= 0xFFFFFFFF);
-            uint count = cast(uint)dcount;
-            switch (e1.type.toBasetype().ty)
-            {
-            case Tint8:
-            case Tuns8:
-            case Tchar:
-                // Possible only with >>>=. >>> always gets promoted to int.
-                result = (value & 0xFF) >> count;
-                break;
-            case Tint16:
-            case Tuns16:
-            case Twchar:
-                // Possible only with >>>=. >>> always gets promoted to int.
-                result = (value & 0xFFFF) >> count;
-                break;
-            case Tint32:
-            case Tuns32:
-            case Tdchar:
-                result = (value & 0xFFFFFFFF) >> count;
-                break;
-            case Tint64:
-            case Tuns64:
-                result = cast(d_uns64)value >> count;
-                break;
-            default:
-                assert(0);
-            }
-            break;
-        }
-    case TOKequal:
-    case TOKidentity:
-        result = (e1.getInteger() == e2.getInteger());
-        break;
-    case TOKnotequal:
-    case TOKnotidentity:
-        result = (e1.getInteger() != e2.getInteger());
-        break;
-    default:
-        assert(0);
-    }
-    dest.setInteger(result);
-    dest.type = type;
-}
-
 /******** Constant folding, with support for CTFE ***************************/
 /// Return true if non-pointer expression e can be compared
 /// with >,is, ==, etc, using ctfeCmp, ctfeEqual, ctfeIdentity
@@ -1224,196 +1025,65 @@ extern (C++) bool isCtfeComparable(Expression e)
     return true;
 }
 
-/// Returns e1 OP e2; where OP is ==, !=, <, >=, etc. Result is 0 or 1
-extern (C++) int intUnsignedCmp(TOK op, dinteger_t n1, dinteger_t n2)
+/// Map TOK comparison ops
+private bool numCmp(N)(TOK op, N n1, N n2)
 {
-    int n;
     switch (op)
     {
     case TOKlt:
-        n = n1 < n2;
-        break;
+        return n1 < n2;
     case TOKle:
-        n = n1 <= n2;
-        break;
+        return n1 <= n2;
     case TOKgt:
-        n = n1 > n2;
-        break;
+        return n1 > n2;
     case TOKge:
-        n = n1 >= n2;
-        break;
-    case TOKleg:
-        n = 1;
-        break;
-    case TOKlg:
-        n = n1 != n2;
-        break;
-    case TOKunord:
-        n = 0;
-        break;
-    case TOKue:
-        n = n1 == n2;
-        break;
-    case TOKug:
-        n = n1 > n2;
-        break;
-    case TOKuge:
-        n = n1 >= n2;
-        break;
-    case TOKul:
-        n = n1 < n2;
-        break;
-    case TOKule:
-        n = n1 <= n2;
-        break;
+        return n1 >= n2;
+
     default:
         assert(0);
     }
-    return n;
+}
+
+/// Returns cmp OP 0; where OP is ==, !=, <, >=, etc. Result is 0 or 1
+extern (C++) int specificCmp(TOK op, int rawCmp)
+{
+    return numCmp!int(op, rawCmp, 0);
+}
+
+/// Returns e1 OP e2; where OP is ==, !=, <, >=, etc. Result is 0 or 1
+extern (C++) int intUnsignedCmp(TOK op, dinteger_t n1, dinteger_t n2)
+{
+    return numCmp!dinteger_t(op, n1, n2);
 }
 
 /// Returns e1 OP e2; where OP is ==, !=, <, >=, etc. Result is 0 or 1
 extern (C++) int intSignedCmp(TOK op, sinteger_t n1, sinteger_t n2)
 {
-    int n;
-    switch (op)
-    {
-    case TOKlt:
-        n = n1 < n2;
-        break;
-    case TOKle:
-        n = n1 <= n2;
-        break;
-    case TOKgt:
-        n = n1 > n2;
-        break;
-    case TOKge:
-        n = n1 >= n2;
-        break;
-    case TOKleg:
-        n = 1;
-        break;
-    case TOKlg:
-        n = n1 != n2;
-        break;
-    case TOKunord:
-        n = 0;
-        break;
-    case TOKue:
-        n = n1 == n2;
-        break;
-    case TOKug:
-        n = n1 > n2;
-        break;
-    case TOKuge:
-        n = n1 >= n2;
-        break;
-    case TOKul:
-        n = n1 < n2;
-        break;
-    case TOKule:
-        n = n1 <= n2;
-        break;
-    default:
-        assert(0);
-    }
-    return n;
+    return numCmp!sinteger_t(op, n1, n2);
 }
 
 /// Returns e1 OP e2; where OP is ==, !=, <, >=, etc. Result is 0 or 1
 extern (C++) int realCmp(TOK op, real_t r1, real_t r2)
 {
-    int n;
     // Don't rely on compiler, handle NAN arguments separately
     if (Port.isNan(r1) || Port.isNan(r2)) // if unordered
     {
         switch (op)
         {
         case TOKlt:
-            n = 0;
-            break;
         case TOKle:
-            n = 0;
-            break;
         case TOKgt:
-            n = 0;
-            break;
         case TOKge:
-            n = 0;
-            break;
-        case TOKleg:
-            n = 0;
-            break;
-        case TOKlg:
-            n = 0;
-            break;
-        case TOKunord:
-            n = 1;
-            break;
-        case TOKue:
-            n = 1;
-            break;
-        case TOKug:
-            n = 1;
-            break;
-        case TOKuge:
-            n = 1;
-            break;
-        case TOKul:
-            n = 1;
-            break;
-        case TOKule:
-            n = 1;
-            break;
+            return 0;
+
         default:
             assert(0);
         }
     }
     else
     {
-        switch (op)
-        {
-        case TOKlt:
-            n = r1 < r2;
-            break;
-        case TOKle:
-            n = r1 <= r2;
-            break;
-        case TOKgt:
-            n = r1 > r2;
-            break;
-        case TOKge:
-            n = r1 >= r2;
-            break;
-        case TOKleg:
-            n = 1;
-            break;
-        case TOKlg:
-            n = r1 != r2;
-            break;
-        case TOKunord:
-            n = 0;
-            break;
-        case TOKue:
-            n = r1 == r2;
-            break;
-        case TOKug:
-            n = r1 > r2;
-            break;
-        case TOKuge:
-            n = r1 >= r2;
-            break;
-        case TOKul:
-            n = r1 < r2;
-            break;
-        case TOKule:
-            n = r1 <= r2;
-            break;
-        default:
-            assert(0);
-        }
+        return numCmp!real_t(op, r1, r2);
     }
-    return n;
 }
 
 /* Conceptually the same as memcmp(e1, e2).
@@ -1666,7 +1336,6 @@ extern (C++) int ctfeRawCmp(Loc loc, Expression e1, Expression e2)
     }
     error(loc, "CTFE internal error: bad compare");
     assert(0);
-    return 0;
 }
 
 /// Evaluate ==, !=.  Resolves slices before comparing. Returns 0 or 1
@@ -1718,76 +1387,23 @@ extern (C++) int ctfeIdentity(Loc loc, TOK op, Expression e1, Expression e2)
 /// Evaluate >,<=, etc. Resolves slices before comparing. Returns 0 or 1
 extern (C++) int ctfeCmp(Loc loc, TOK op, Expression e1, Expression e2)
 {
-    int n;
     Type t1 = e1.type.toBasetype();
     Type t2 = e2.type.toBasetype();
+
     if (t1.isString() && t2.isString())
-    {
-        int cmp = ctfeRawCmp(loc, e1, e2);
-        switch (op)
-        {
-        case TOKlt:
-            n = cmp < 0;
-            break;
-        case TOKle:
-            n = cmp <= 0;
-            break;
-        case TOKgt:
-            n = cmp > 0;
-            break;
-        case TOKge:
-            n = cmp >= 0;
-            break;
-        case TOKleg:
-            n = 1;
-            break;
-        case TOKlg:
-            n = cmp != 0;
-            break;
-        case TOKunord:
-            n = 0;
-            break;
-        case TOKue:
-            n = cmp == 0;
-            break;
-        case TOKug:
-            n = cmp > 0;
-            break;
-        case TOKuge:
-            n = cmp >= 0;
-            break;
-        case TOKul:
-            n = cmp < 0;
-            break;
-        case TOKule:
-            n = cmp <= 0;
-            break;
-        default:
-            assert(0);
-        }
-    }
+        return specificCmp(op, ctfeRawCmp(loc, e1, e2));
     else if (t1.isreal())
-    {
-        n = realCmp(op, e1.toReal(), e2.toReal());
-    }
+        return realCmp(op, e1.toReal(), e2.toReal());
     else if (t1.isimaginary())
-    {
-        n = realCmp(op, e1.toImaginary(), e2.toImaginary());
-    }
+        return realCmp(op, e1.toImaginary(), e2.toImaginary());
     else if (t1.isunsigned() || t2.isunsigned())
-    {
-        n = intUnsignedCmp(op, e1.toInteger(), e2.toInteger());
-    }
+        return intUnsignedCmp(op, e1.toInteger(), e2.toInteger());
     else
-    {
-        n = intSignedCmp(op, e1.toInteger(), e2.toInteger());
-    }
-    return n;
+        return intSignedCmp(op, e1.toInteger(), e2.toInteger());
 }
 
-extern (C++) UnionExp ctfeCat(Type type, Expression e1, Expression e2)
+extern (C++) UnionExp ctfeCat(Loc loc, Type type, Expression e1, Expression e2)
 {
-    Loc loc = e1.loc;
     Type t1 = e1.type.toBasetype();
     Type t2 = e2.type.toBasetype();
     UnionExp ue;
@@ -1809,7 +1425,7 @@ extern (C++) UnionExp ctfeCat(Type type, Expression e1, Expression e2)
                 return ue;
             }
             dinteger_t v = es2e.toInteger();
-            memcpy(cast(char*)s + i * sz, &v, sz);
+            Port.valcpy(cast(char*)s + i * sz, v, sz);
         }
         // Add terminating 0
         memset(cast(char*)s + len * sz, 0, sz);
@@ -1839,7 +1455,7 @@ extern (C++) UnionExp ctfeCat(Type type, Expression e1, Expression e2)
                 return ue;
             }
             dinteger_t v = es2e.toInteger();
-            memcpy(cast(char*)s + (es1.len + i) * sz, &v, sz);
+            Port.valcpy(cast(char*)s + (es1.len + i) * sz, v, sz);
         }
         // Add terminating 0
         memset(cast(char*)s + len * sz, 0, sz);
@@ -1864,13 +1480,13 @@ extern (C++) UnionExp ctfeCat(Type type, Expression e1, Expression e2)
     if (e1.op == TOKarrayliteral && e2.op == TOKnull && t1.nextOf().equals(t2.nextOf()))
     {
         //  [ e1 ] ~ null ----> [ e1 ].dup
-        ue = paintTypeOntoLiteralCopy(type, copyLiteral(e1).exp());
+        ue = paintTypeOntoLiteralCopy(type, copyLiteral(e1).copy());
         return ue;
     }
     if (e1.op == TOKnull && e2.op == TOKarrayliteral && t1.nextOf().equals(t2.nextOf()))
     {
         //  null ~ [ e2 ] ----> [ e2 ].dup
-        ue = paintTypeOntoLiteralCopy(type, copyLiteral(e2).exp());
+        ue = paintTypeOntoLiteralCopy(type, copyLiteral(e2).copy());
         return ue;
     }
     ue = Cat(type, e1, e2);
@@ -1963,7 +1579,7 @@ extern (C++) Expression ctfeCast(Loc loc, Type type, Type to, Expression e)
     }
     else
     {
-        r = Cast(type, to, e).copy();
+        r = Cast(loc, type, to, e).copy();
     }
     if (CTFEExp.isCantExp(r))
         error(loc, "cannot cast %s to %s at compile time", e.toChars(), to.toChars());
@@ -2129,10 +1745,10 @@ extern (C++) UnionExp changeArrayLiteralLength(Loc loc, TypeArray arrayType, Exp
                 (cast(char*)s)[cast(size_t)(indxlo + elemi)] = cast(char)defaultValue;
                 break;
             case 2:
-                (cast(utf16_t*)s)[cast(size_t)(indxlo + elemi)] = cast(utf16_t)defaultValue;
+                (cast(wchar*)s)[cast(size_t)(indxlo + elemi)] = cast(wchar)defaultValue;
                 break;
             case 4:
-                (cast(utf32_t*)s)[cast(size_t)(indxlo + elemi)] = cast(utf32_t)defaultValue;
+                (cast(dchar*)s)[cast(size_t)(indxlo + elemi)] = cast(dchar)defaultValue;
                 break;
             default:
                 assert(0);

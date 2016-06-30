@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -19,7 +19,7 @@ import core.stdc.string;
  */
 extern (C++) const(char)* importHint(const(char)* s)
 {
-    static __gshared const(char)** modules = ["core.stdc.stdio", "std.stdio", "std.math", "core.vararg", null];
+    static __gshared const(char)** modules = ["core.stdc.stdio", "std.stdio", "std.math", null];
     static __gshared const(char)** names =
     [
         "printf",
@@ -30,8 +30,6 @@ extern (C++) const(char)* importHint(const(char)* s)
         "cos",
         "sqrt",
         "fabs",
-        null,
-        "__va_argsave_t",
         null
     ];
     int m = 0;
@@ -50,16 +48,13 @@ extern (C++) const(char)* importHint(const(char)* s)
     return null; // didn't find it
 }
 
-version (unittest)
+unittest
 {
-    extern (C++) void unittest_importHint()
-    {
-        const(char)* p;
-        p = importHint("printf");
-        assert(p);
-        p = importHint("fabs");
-        assert(p);
-        p = importHint("xxxxx");
-        assert(!p);
-    }
+    const(char)* p;
+    p = importHint("printf");
+    assert(p);
+    p = importHint("fabs");
+    assert(p);
+    p = importHint("xxxxx");
+    assert(!p);
 }

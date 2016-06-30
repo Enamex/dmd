@@ -21,6 +21,9 @@
 #include        "go.h"
 #include        "ty.h"
 #include        "code.h"
+#if MARS
+#include        "varstats.h"
+#endif
 #if SPP || SCPP
 #include        "parser.h"
 #endif
@@ -40,9 +43,7 @@ int TYptrdiff = TYint;
 int TYsize = TYuint;
 int TYsize_t = TYuint;
 
-#ifdef DEBUG
 char debuga,debugb,debugc,debugd,debuge,debugf,debugr,debugs,debugt,debugu,debugw,debugx,debugy;
-#endif
 
 #if !MARS
 linkage_t linkage;
@@ -90,17 +91,10 @@ mangle_t funcmangletab[LINK_MAXDIM] =
 mangle_t varmangletab[LINK_MAXDIM] =
 {
     mTYman_c,
-#if NEWMANGLE
     mTYman_cpp,
-#else
-    mTYman_c,
-#endif
     mTYman_pas,mTYman_for,mTYman_sys,mTYman_std,mTYman_d
 };
 #endif
-
-targ_size_t     dsout = 0;      /* # of bytes actually output to data   */
-                                /* segment, used to pad for alignment   */
 
 /* File variables: */
 
@@ -193,29 +187,12 @@ symtab_t globsym;               /* global symbol table                  */
 Pstate pstate;                  // parser state
 Cstate cstate;                  // compiler state
 
-/* From go.c */
-mftype mfoptim = 0;             // mask of optimizations to perform
-
-unsigned changes;               // # of optimizations performed
-struct DN *defnod = NULL;       // array of definition elems
-
-elem **expnod = NULL;   /* array of expression elems                    */
-block **expblk = NULL;  /* parallel array of block pointers             */
-
 unsigned
          maxblks = 0,   /* array max for all block stuff                */
                         /* dfoblks <= numblks <= maxblks                */
-         numcse,        /* number of common subexpressions              */
-         deftop = 0,    /* # of entries in defnod[]                     */
-         exptop = 0;    /* top of expnod[]                              */
+         numcse;        /* number of common subexpressions              */
 
-vec_t   defkill = NULL,         /* vector of AEs killed by an ambiguous */
-                                /* definition                           */
-        starkill = NULL,        /* vector of AEs killed by a definition */
-                                /* of something that somebody could be  */
-                                /* pointing to                          */
-        vptrkill = NULL;        /* vector of AEs killed by an access    */
-                                /* to a vptr                            */
+struct Go go;
 
 /* From debug.c */
 #if DEBUG
@@ -230,3 +207,7 @@ const char *regstring[32] = {"AX","CX","DX","BX","SP","BP","SI","DI",
 type *chartype;                 /* default 'char' type                  */
 
 Obj *objmod = NULL;
+
+#if MARS
+VarStatistics varStats;
+#endif

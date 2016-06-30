@@ -3,6 +3,7 @@
 src/cdxxx.c
 src/debtab.c
 src/dmd
+src/dmd_frontend
 src/ddmd
 src/dmd.conf
 src/elxxx.c
@@ -18,6 +19,7 @@ test/test_results
 *.obj
 src/idgen.exe
 src/dmd.exe
+src/dmd_frontend.exe
 src/optabgen.exe
 src/verstr.h
 *.map
@@ -26,6 +28,7 @@ trace.def
 trace.log
 Makefile
 src/magicport/magicport
+src/SYSCONFDIR.imp
 
 # Visual Studio files
 *.exe
@@ -37,6 +40,7 @@ src/vcbuild/x64
 *.sdf
 *.opensdf
 *.user
+*.ilk
 ipch
 
 # Xcode files

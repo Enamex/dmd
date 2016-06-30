@@ -1,12 +1,12 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2014 by Digital Mars
+ * Copyright (c) 1999-2016 by Digital Mars
  * All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/D-Programming-Language/dmd/blob/master/src/module.h
+ * https://github.com/dlang/dmd/blob/master/src/module.h
  */
 
 #ifndef DMD_MODULE_H
@@ -37,19 +37,19 @@ class Package : public ScopeDsymbol
 {
 public:
     PKG isPkgMod;
+    unsigned tag;       // auto incremented tag, used to mask package tree in scopes
     Module *mod;        // != NULL if isPkgMod == PKGmodule
 
-    Package(Identifier *ident);
     const char *kind();
 
     static DsymbolTable *resolve(Identifiers *packages, Dsymbol **pparent, Package **ppkg);
 
     Package *isPackage() { return this; }
 
-    bool isAncestorPackageOf(Package *pkg);
+    bool isAncestorPackageOf(const Package * const pkg) const;
 
     void semantic(Scope *sc) { }
-    Dsymbol *search(Loc loc, Identifier *ident, int flags = IgnoreNone);
+    Dsymbol *search(Loc loc, Identifier *ident, int flags = SearchLocalsOnly);
     void accept(Visitor *v) { v->visit(this); }
 
     Module *isPackageMod();
@@ -62,6 +62,7 @@ public:
     static DsymbolTable *modules;       // symbol table of all modules
     static Modules amodules;            // array of all modules
     static Dsymbols deferred;   // deferred Dsymbol's needing semantic() run on them
+    static Dsymbols deferred2;  // deferred Dsymbol's needing semantic2() run on them
     static Dsymbols deferred3;  // deferred Dsymbol's needing semantic3() run on them
     static unsigned dprogress;  // progress resolving the deferred list
     static void init();
@@ -115,7 +116,6 @@ public:
     size_t nameoffset;          // offset of module name from start of ModuleInfo
     size_t namelen;             // length of module name in characters
 
-    Module(const char *arg, Identifier *ident, int doDocComment, int doHdrGen);
     static Module* create(const char *arg, Identifier *ident, int doDocComment, int doHdrGen);
 
     static Module *load(Loc loc, Identifiers *packages, Identifier *ident);
@@ -130,12 +130,14 @@ public:
     void semantic2();   // pass 2 semantic analysis
     void semantic3();   // pass 3 semantic analysis
     int needModuleInfo();
-    Dsymbol *search(Loc loc, Identifier *ident, int flags = IgnoreNone);
+    Dsymbol *search(Loc loc, Identifier *ident, int flags = SearchLocalsOnly);
     Dsymbol *symtabInsert(Dsymbol *s);
     void deleteObjFile();
     static void addDeferredSemantic(Dsymbol *s);
-    static void runDeferredSemantic();
+    static void addDeferredSemantic2(Dsymbol *s);
     static void addDeferredSemantic3(Dsymbol *s);
+    static void runDeferredSemantic();
+    static void runDeferredSemantic2();
     static void runDeferredSemantic3();
     static void clearCache();
     int imports(Module *m);
@@ -176,8 +178,6 @@ struct ModuleDeclaration
     Identifiers *packages;            // array of Identifier's representing packages
     bool isdeprecated;  // if it is a deprecated module
     Expression *msg;
-
-    ModuleDeclaration(Loc loc, Identifiers *packages, Identifier *id);
 
     char *toChars();
 };

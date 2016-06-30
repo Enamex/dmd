@@ -13,6 +13,8 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
+
 #if MARS
 class LabelDsymbol;
 class Declaration;
@@ -101,7 +103,6 @@ extern con_t regcon;
  *      CSEpe           pointer to saved elem
  *      CSEregm         mask of register that was saved (so for multi-
  *                      register variables we know which part we have)
- *      cstop =         # of entries in table
  */
 
 struct CSE
@@ -165,8 +166,8 @@ extern unsigned usednteh;
 #define NTEHcleanup     8       // destructors need to be called
 #define NTEHtry         0x10    // had C++ try statement
 #define NTEHcpp         (NTEHexcspec | NTEHcleanup | NTEHtry)
-#define EHcleanup       0x20
-#define EHtry           0x40
+#define EHcleanup       0x20    // has destructors in the 'code' instructions
+#define EHtry           0x40    // has BCtry or BC_try blocks
 #define NTEHjmonitor    0x80    // uses Mars monitor
 #define NTEHpassthru    0x100
 
@@ -175,6 +176,13 @@ extern unsigned usednteh;
 typedef struct CGstate
 {
     int stackclean;     // if != 0, then clean the stack after function call
+
+    LocalSection funcarg;       // where function arguments are placed
+    targ_size_t funcargtos;     // current high water level of arguments being moved onto
+                                // the funcarg section. It is filled from top to bottom,
+                                // as if they were 'pushed' on the stack.
+                                // Special case: if funcargtos==~0, then no
+                                // arguments are there.
 } CGstate;
 
 extern CGstate cgstate;
@@ -190,7 +198,7 @@ extern  regm_t FLOATREGS;
 extern  regm_t FLOATREGS2;
 extern  regm_t DOUBLEREGS;
 extern  const char datafl[],stackfl[],segfl[],flinsymtab[];
-extern  char needframe,usedalloca,gotref;
+extern  char needframe,gotref;
 extern  targ_size_t localsize,
         funcoffset,
         framehandleroffset;
@@ -200,6 +208,7 @@ extern  LocalSection Para;
 extern  LocalSection Fast;
 extern  LocalSection Auto;
 extern  LocalSection EEStack;
+extern  LocalSection Alloca;
 #if TARGET_OSX
 extern  targ_size_t localgotoffset;
 #endif
@@ -212,7 +221,6 @@ extern int pass;
 
 extern  int dfoidx;
 extern  struct CSE *csextab;
-extern  unsigned cstop;
 #if TX86
 extern  bool floatreg;
 #endif
@@ -246,6 +254,7 @@ code *allocreg (regm_t *pretregs , unsigned *preg , tym_t tym , int line , const
 #else
 code *allocreg (regm_t *pretregs , unsigned *preg , tym_t tym );
 #endif
+regm_t lpadregs();
 void useregs (regm_t regm );
 code *getregs (regm_t r );
 code *getregs_imm (regm_t r );
@@ -283,7 +292,7 @@ code *fixresult (elem *e , regm_t retregs , regm_t *pretregs );
 code *callclib (elem *e , unsigned clib , regm_t *pretregs , regm_t keepmask );
 cd_t cdfunc;
 cd_t cdstrthis;
-code *params(elem *, unsigned);
+code *pushParams(elem *, unsigned);
 code *offsetinreg (elem *e , regm_t *pretregs );
 code *loaddata (elem *e , regm_t *pretregs );
 
@@ -395,18 +404,20 @@ extern targ_size_t spoff;
 extern targ_size_t Foff;        // BP offset of floating register
 extern targ_size_t CSoff;       // offset of common sub expressions
 extern targ_size_t NDPoff;      // offset of saved 8087 registers
-extern int BPoff;                      // offset from BP
+extern targ_size_t pushoff;     // offset of saved registers
+extern bool pushoffuse;         // using pushoff
+extern int BPoff;               // offset from BP
 extern int EBPtoESP;            // add to EBP offset to get ESP offset
-extern int AllocaOff;               // offset of alloca temporary
 
 code* prolog_ifunc(tym_t* tyf);
 code* prolog_ifunc2(tym_t tyf, tym_t tym, bool pushds);
 code* prolog_16bit_windows_farfunc(tym_t* tyf, bool* pushds);
-code* prolog_frame(unsigned farfunc, unsigned* xlocalsize, bool* enter);
+code* prolog_frame(unsigned farfunc, unsigned* xlocalsize, bool* enter, int* cfa_offset);
 code* prolog_frameadj(tym_t tyf, unsigned xlocalsize, bool enter, bool* pushalloc);
 code* prolog_frameadj2(tym_t tyf, unsigned xlocalsize, bool* pushalloc);
 code* prolog_setupalloca();
-code* prolog_saveregs(code *c, regm_t topush);
+code* prolog_saveregs(code *c, regm_t topush, int cfa_offset);
+code* epilog_restoreregs(code *c, regm_t topop);
 code* prolog_trace(bool farfunc, unsigned* regsaved);
 code* prolog_gen_win64_varargs();
 code* prolog_genvarargs(symbol* sv, regm_t* namedargs);
@@ -687,4 +698,50 @@ inline void regimmed_set(int reg, targ_size_t e)
 #if __cplusplus && TX86
 }
 #endif
+
+struct CodeBuilder
+{
+  private:
+
+    code *head;
+    code **pTail;
+
+  public:
+    CodeBuilder() { head = NULL; pTail = &head; }
+    CodeBuilder(code *c);
+    code *finish() { return head; }
+
+    void append(CodeBuilder& cdb);
+    void append(CodeBuilder& cdb1, CodeBuilder& cdb2);
+    void append(CodeBuilder& cdb1, CodeBuilder& cdb2, CodeBuilder& cdb3);
+    void append(CodeBuilder& cdb1, CodeBuilder& cdb2, CodeBuilder& cdb3, CodeBuilder& cdb4);
+    void append(CodeBuilder& cdb1, CodeBuilder& cdb2, CodeBuilder& cdb3, CodeBuilder& cdb4, CodeBuilder& cdb5);
+
+    void append(code *c);
+
+    void gen(code *cs);
+    void gen1(unsigned op);
+    void gen2(unsigned op, unsigned rm);
+    void gen2sib(unsigned op, unsigned rm, unsigned sib);
+    void genasm(char *s, unsigned slen);
+    void gencsi(unsigned op, unsigned rm, unsigned FL2, SYMIDX si);
+    void gencs(unsigned op, unsigned rm, unsigned FL2, symbol *s);
+    void genc2(unsigned op, unsigned rm, targ_size_t EV2);
+    void genc1(unsigned op, unsigned rm, unsigned FL1, targ_size_t EV1);
+    void genc(unsigned op, unsigned rm, unsigned FL1, targ_size_t EV1, unsigned FL2, targ_size_t EV2);
+    void genlinnum(Srcpos);
+    void genadjesp(int offset);
+    void genadjfpu(int offset);
+    void gennop();
+
+    /*****************
+     * Returns:
+     *  code that pTail points to
+     */
+    code *last()
+    {
+        return (code *)((char *)pTail - offsetof(code, next));
+    }
+};
+
 

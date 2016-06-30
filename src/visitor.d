@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -32,7 +32,6 @@ import ddmd.staticassert;
 
 extern (C++) class Visitor
 {
-public:
     void visit(Statement)
     {
         assert(0);
@@ -380,7 +379,7 @@ public:
 
     void visit(EnumMember s)
     {
-        visit(cast(Dsymbol)s);
+        visit(cast(VarDeclaration)s);
     }
 
     void visit(Import s)
@@ -419,6 +418,11 @@ public:
     }
 
     void visit(LinkDeclaration s)
+    {
+        visit(cast(AttribDeclaration)s);
+    }
+
+    void visit(CPPMangleDeclaration s)
     {
         visit(cast(AttribDeclaration)s);
     }
@@ -933,7 +937,7 @@ public:
         visit(cast(UnaExp)e);
     }
 
-    void visit(FileExp e)
+    void visit(ImportExp e)
     {
         visit(cast(UnaExp)e);
     }
@@ -1004,11 +1008,6 @@ public:
     }
 
     void visit(NotExp e)
-    {
-        visit(cast(UnaExp)e);
-    }
-
-    void visit(BoolExp e)
     {
         visit(cast(UnaExp)e);
     }
@@ -1382,6 +1381,5 @@ public:
 
     final extern (D) this()
     {
-        this.stop = false;
     }
 }

@@ -5,7 +5,7 @@
 // http://www.digitalmars.com
 // Distributed under the Boost Software License, Version 1.0.
 // http://www.boost.org/LICENSE_1_0.txt
-// https://github.com/D-Programming-Language/dmd/blob/master/src/backend/cv8.c
+// https://github.com/dlang/dmd/blob/master/src/backend/cv8.c
 
 // This module generates the .debug$S and .debug$T sections for Win64,
 // which are the MS-Coff symbolic debug info and type debug info sections.
@@ -29,6 +29,7 @@
 #include        "cv4.h"
 #include        "obj.h"
 #include        "outbuf.h"
+#include        "varstats.h"
 
 static char __file__[] = __FILE__;      /* for tassert.h                */
 #include        "tassert.h"
@@ -64,6 +65,7 @@ struct F1_Fixups
 {
     Symbol *s;
     unsigned offset;
+    unsigned value;
 };
 
 static Outbuffer *F1fixup;      // array of F1_Fixups
@@ -187,6 +189,17 @@ void cv8_termfile(const char *objfilename)
     buf.writeWord(S_COMPILAND_V3);
     buf.write32(0);
     buf.write(objfilename, len + 1);
+
+    // write S_COMPILE record
+    buf.writeWord(2 + 1 + 1 + 2 + 1 + sizeof(VERSION));
+    buf.writeWord(S_COMPILE);
+    buf.writeByte(I64 ? 0xD0 : 6); // target machine AMD64 or x86 (Pentium II)
+    buf.writeByte(config.flags2 & CFG2gms ? (CPP != 0) : 'D'); // language index (C/C++/D)
+    buf.writeWord(0x800 | (config.inline8087 ? 0 : (1<<3)));   // 32-bit, float package
+    buf.writeByte(sizeof(VERSION));
+    buf.writeByte('Z');
+    buf.write(VERSION, sizeof(VERSION) - 1);
+
     cv8_writesection(seg, 0xF1, &buf);
 
     // Write out "F2" sections
@@ -228,7 +241,7 @@ void cv8_termfile(const char *objfilename)
             for (unsigned u = 0; u < length; u += sizeof(F1_Fixups))
             {   F1_Fixups *f = (F1_Fixups *)(p + u);
 
-                objmod->reftoident(f2seg, f1offset + 8 + f->offset, f->s, 0, CFseg | CFoff);
+                objmod->reftoident(f2seg, f1offset + 8 + f->offset, f->s, f->value, CFseg | CFoff);
             }
         }
     }
@@ -251,7 +264,7 @@ void cv8_termfile(const char *objfilename)
         for (unsigned u = 0; u < length; u += sizeof(F1_Fixups))
         {   F1_Fixups *f = (F1_Fixups *)(p + u);
 
-            objmod->reftoident(seg, f1offset + 8 + f->offset, f->s, 0, CFseg | CFoff);
+            objmod->reftoident(seg, f1offset + 8 + f->offset, f->s, f->value, CFseg | CFoff);
         }
     }
 
@@ -298,6 +311,68 @@ void cv8_func_start(Symbol *sfunc)
     {
         currentfuncdata.f1buf = new Outbuffer(128);
         currentfuncdata.f1fixup = new Outbuffer(128);
+    }
+    varStats.startFunction();
+}
+
+// record for CV record S_BLOCK_V3
+struct block_v3_data
+{
+    unsigned short len;
+    unsigned short id;
+    unsigned int pParent;
+    unsigned int pEnd;
+    unsigned int length;
+    unsigned int offset;
+    unsigned short seg;
+    unsigned char name[1];
+};
+
+/******************************************
+ * write lexical scope records up to the line where the symbol sa is created
+ * if sa == NULL, flush all remaining records
+ */
+void cv8_writeLexicalScope(Funcsym *s, symbol *sa, VarStatistics* vs)
+{
+    if (vs->cntUsedVarStats == 0)
+        return;
+
+    unsigned line;
+    if(sa)
+    {
+        line = sa->lnoscopestart + 1;
+    }
+    else
+    {
+        // flush all
+        line = vs->firstVarStatsLine + vs->cntUsedVarStats;
+    }
+    while (vs->nextVarStatsLine < line && vs->nextVarStatsLine < vs->firstVarStatsLine + vs->cntUsedVarStats)
+    {
+        Outbuffer *buf = currentfuncdata.f1buf;
+        unsigned idx = vs->nextVarStatsLine - vs->firstVarStatsLine;
+        for(int d = 0; d < vs->varStats[idx].numDel; d++)
+        {
+            static unsigned short s_end[] = { 2, S_END };
+            buf->write(s_end, sizeof(s_end));
+        }
+        for(int n = 0; n < vs->varStats[idx].numNew; n++)
+        {
+            unsigned offset = vs->varStats[idx].offset;
+            unsigned length = vs->varStats[vs->varStats[idx].endLine - vs->firstVarStatsLine].offset - offset;
+            unsigned soffset = buf->size();
+            // parent and end to be filled by linker
+            block_v3_data block32 = { sizeof(block_v3_data) - 2, S_BLOCK_V3, 0, 0, length, offset, 0, { 0 } };
+            buf->write(&block32, sizeof(block32));
+            size_t offOffset = (char*)&block32.offset - (char*)&block32;
+
+            F1_Fixups f1f;
+            f1f.s = s;
+            f1f.offset = soffset + offOffset;
+            f1f.value = offset;
+            currentfuncdata.f1fixup->write(&f1f, sizeof(f1f));
+        }
+        vs->nextVarStatsLine++;
     }
 }
 
@@ -375,6 +450,7 @@ void cv8_func_term(Symbol *sfunc)
     F1_Fixups f1f;
     f1f.s = sfunc;
     f1f.offset = buf->size();
+    f1f.value = 0;
     currentfuncdata.f1fixup->write(&f1f, sizeof(f1f));
     buf->write32(0);
     buf->writeWordn(0);
@@ -382,6 +458,8 @@ void cv8_func_term(Symbol *sfunc)
     buf->writeByte(0);
     buf->writen(id, len);
     buf->writeByte(0);
+
+    varStats.calcLexicalScope(sfunc, &globsym);
 
     // Write local symbol table
     bool endarg = false;
@@ -397,8 +475,11 @@ void cv8_func_term(Symbol *sfunc)
             buf->writeWord(S_ENDARG);
             endarg = true;
         }
+        if (varStats.isLexVar[si])
+            cv8_writeLexicalScope(sfunc, sa, &varStats);
         cv8_outsym(sa);
     }
+    cv8_writeLexicalScope(sfunc, 0, &varStats); // flush remaining entries
 
     /* Put out function return record S_RETURN
      * (VC doesn't, so we won't bother, either.)
@@ -433,6 +514,8 @@ void cv8_linnum(Srcpos srcpos, targ_size_t offset)
         currentfuncdata.srcfilename = srcpos.Sfilename;
         currentfuncdata.srcfileoff  = cv8_addfile(srcpos.Sfilename);
     }
+
+    varStats.recordLineOffset(srcpos, offset);
 
     static unsigned lastoffset;
     static unsigned lastlinnum;
@@ -583,6 +666,7 @@ void cv8_outsym(Symbol *s)
         len = CV8_MAX_SYMBOL_LENGTH;
 
     F1_Fixups f1f;
+    f1f.value = 0;
     Outbuffer *buf = currentfuncdata.f1buf;
 
     unsigned sr;

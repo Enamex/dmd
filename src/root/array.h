@@ -3,7 +3,7 @@
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * (See accompanying file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
- * https://github.com/D-Programming-Language/dmd/blob/master/src/root/array.h
+ * https://github.com/dlang/dmd/blob/master/src/root/array.h
  */
 
 #ifndef ARRAY_H
@@ -24,11 +24,13 @@
 template <typename TYPE>
 struct Array
 {
-    size_t dim;
+    d_size_t dim;
     TYPE *data;
 
   private:
-    size_t allocdim;
+    Array(const Array&);
+
+    d_size_t allocdim;
     #define SMALLARRAYCAP       1
     TYPE smallarray[SMALLARRAYCAP];    // inline storage for small arrays
 
@@ -49,8 +51,8 @@ struct Array
     char *toChars()
     {
         char **buf = (char **)mem.xmalloc(dim * sizeof(char *));
-        size_t len = 2;
-        for (size_t u = 0; u < dim; u++)
+        d_size_t len = 2;
+        for (d_size_t u = 0; u < dim; u++)
         {
             buf[u] = ((RootObject *)data[u])->toChars();
             len += strlen(buf[u]) + 1;
@@ -59,7 +61,7 @@ struct Array
 
         str[0] = '[';
         char *p = str + 1;
-        for (size_t u = 0; u < dim; u++)
+        for (d_size_t u = 0; u < dim; u++)
         {
             if (u)
                 *p++ = ',';
@@ -73,7 +75,7 @@ struct Array
         return str;
     }
 
-    void reserve(size_t nentries)
+    void reserve(d_size_t nentries)
     {
         //printf("Array::reserve: dim = %d, allocdim = %d, nentries = %d\n", (int)dim, (int)allocdim, (int)nentries);
         if (allocdim - dim < nentries)
@@ -102,36 +104,13 @@ struct Array
         }
     }
 
-    void setDim(size_t newdim)
+    void setDim(d_size_t newdim)
     {
         if (dim < newdim)
         {
             reserve(newdim - dim);
         }
         dim = newdim;
-    }
-
-    void fixDim()
-    {
-        if (dim != allocdim)
-        {
-            if (allocdim >= SMALLARRAYCAP)
-            {
-                if (dim <= SMALLARRAYCAP)
-                {
-                    memcpy(&smallarray[0], data, dim * sizeof(*data));
-                    mem.xfree(data);
-                }
-                else
-                    data = (TYPE *)mem.xrealloc(data, dim * sizeof(*data));
-            }
-            allocdim = dim;
-        }
-    }
-
-    TYPE pop()
-    {
-        return data[--dim];
     }
 
     void shift(TYPE ptr)
@@ -142,21 +121,9 @@ struct Array
         dim++;
     }
 
-    void remove(size_t i)
-    {
-        if (dim - i - 1)
-            memmove(data + i, data + i + 1, (dim - i - 1) * sizeof(data[0]));
-        dim--;
-    }
-
     void zero()
     {
         memset(data,0,dim * sizeof(data[0]));
-    }
-
-    TYPE tos()
-    {
-        return dim ? data[dim - 1] : NULL;
     }
 
     void sort()
@@ -182,43 +149,12 @@ struct Array
         }
     }
 
-    TYPE *tdata()
-    {
-        return data;
-    }
-
-    TYPE& operator[] (size_t index)
+    TYPE& operator[] (d_size_t index)
     {
 #ifdef DEBUG
         assert(index < dim);
 #endif
         return data[index];
-    }
-
-    void insert(size_t index, TYPE v)
-    {
-        reserve(1);
-        memmove(data + index + 1, data + index, (dim - index) * sizeof(*data));
-        data[index] = v;
-        dim++;
-    }
-
-    void insert(size_t index, Array *a)
-    {
-        if (a)
-        {
-            size_t d = a->dim;
-            reserve(d);
-            if (dim != index)
-                memmove(data + index + d, data + index, (dim - index) * sizeof(*data));
-            memcpy(data + index, a->data, d * sizeof(*data));
-            dim += d;
-        }
-    }
-
-    void append(Array *a)
-    {
-        insert(dim, a);
     }
 
     void push(TYPE a)
@@ -227,14 +163,25 @@ struct Array
         data[dim++] = a;
     }
 
-    Array *copy()
-    {
-        Array *a = new Array();
+};
 
-        a->setDim(dim);
-        memcpy(a->data, data, dim * sizeof(*data));
-        return a;
+struct BitArray
+{
+    BitArray()
+      : len(0)
+      , ptr(NULL)
+    {}
+
+    ~BitArray()
+    {
+        mem.xfree(ptr);
     }
+
+    size_t len;
+    size_t *ptr;
+
+private:
+    BitArray(const BitArray&);
 };
 
 #endif

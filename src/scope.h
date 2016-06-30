@@ -1,12 +1,12 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2014 by Digital Mars
+ * Copyright (c) 1999-2016 by Digital Mars
  * All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/D-Programming-Language/dmd/blob/master/src/scope.h
+ * https://github.com/dlang/dmd/blob/master/src/scope.h
  */
 
 #ifndef DMD_SCOPE_H
@@ -105,7 +105,8 @@ struct Scope
     unsigned *fieldinit;
     size_t fieldinit_dim;
 
-    structalign_t structalign;  // alignment for struct members
+    AlignDeclaration *aligndecl;    // alignment for struct members
+
     LINK linkage;               // linkage for external functions
     PINLINE inlining;            // inlining strategy for functions
 
@@ -146,12 +147,15 @@ struct Scope
     Module *instantiatingModule();
 
     Dsymbol *search(Loc loc, Identifier *ident, Dsymbol **pscopesym, int flags = IgnoreNone);
+    static void deprecation10378(Loc loc, Dsymbol *sold, Dsymbol *snew);
     Dsymbol *search_correct(Identifier *ident);
     Dsymbol *insert(Dsymbol *s);
 
     ClassDeclaration *getClassScope();
     AggregateDeclaration *getStructClassScope();
     void setNoFree();
+
+    structalign_t alignment();
 };
 
 #endif /* DMD_SCOPE_H */

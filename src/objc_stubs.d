@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -14,7 +14,6 @@ import ddmd.dscope;
 import ddmd.dstruct;
 import ddmd.func;
 import ddmd.globals;
-import ddmd.id;
 import ddmd.root.stringtable;
 
 struct ObjcSelector
@@ -39,21 +38,18 @@ struct ObjcSelector
     {
         printf("Should never be called when D_OBJC is false\n");
         assert(0);
-        return null;
     }
 
     extern (C++) static ObjcSelector* lookup(const(char)* s, size_t len, size_t pcount)
     {
         printf("Should never be called when D_OBJC is false\n");
         assert(0);
-        return null;
     }
 
     extern (C++) static ObjcSelector* create(FuncDeclaration fdecl)
     {
         printf("Should never be called when D_OBJC is false\n");
         assert(0);
-        return null;
     }
 }
 
@@ -78,7 +74,6 @@ struct Objc_FuncDeclaration
     extern (D) this(FuncDeclaration fdecl)
     {
         this.fdecl = fdecl;
-        selector = null;
     }
 }
 
@@ -104,7 +99,6 @@ extern (C++) bool objc_isUdaSelector(StructDeclaration sd)
 {
     printf("Should never be called when D_OBJC is false\n");
     assert(0);
-    return false;
 }
 
 extern (C++) void objc_FuncDeclaration_semantic_validateSelector(FuncDeclaration fd)

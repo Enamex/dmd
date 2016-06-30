@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -13,7 +13,7 @@ import core.stdc.stdlib;
 import core.stdc.string;
 import ddmd.aggregate;
 import ddmd.arraytypes;
-import ddmd.backend;
+import ddmd.gluelayer;
 import ddmd.dimport;
 import ddmd.dmacro;
 import ddmd.doc;
@@ -22,16 +22,13 @@ import ddmd.dsymbol;
 import ddmd.errors;
 import ddmd.expression;
 import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.id;
 import ddmd.identifier;
-import ddmd.lexer;
 import ddmd.parse;
 import ddmd.root.file;
 import ddmd.root.filename;
 import ddmd.root.outbuffer;
 import ddmd.root.port;
-import ddmd.root.rmem;
 import ddmd.target;
 import ddmd.visitor;
 
@@ -99,30 +96,32 @@ extern (C++) const(char)* lookForSourceFile(const(char)* filename)
 
 enum PKG : int
 {
-    PKGunknown, // not yet determined whether it's a package.d or not
-    PKGmodule, // already determined that's an actual package.d
-    PKGpackage, // already determined that's an actual package
+    PKGunknown,     // not yet determined whether it's a package.d or not
+    PKGmodule,      // already determined that's an actual package.d
+    PKGpackage,     // already determined that's an actual package
 }
 
 alias PKGunknown = PKG.PKGunknown;
 alias PKGmodule = PKG.PKGmodule;
 alias PKGpackage = PKG.PKGpackage;
 
+/***********************************************************
+ */
 extern (C++) class Package : ScopeDsymbol
 {
-public:
     PKG isPkgMod;
-    Module mod; // != NULL if isPkgMod == PKGmodule
+    uint tag;        // auto incremented tag, used to mask package tree in scopes
+    Module mod;     // !=null if isPkgMod == PKGmodule
 
-    /* =========================== Package ===================== */
     final extern (D) this(Identifier ident)
     {
         super(ident);
         this.isPkgMod = PKGunknown;
-        this.mod = null;
+        __gshared uint packageTag;
+        this.tag = packageTag++;
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "package";
     }
@@ -136,7 +135,7 @@ public:
      *      *pparent        the rightmost package, i.e. pkg2, or NULL if no packages
      *      *ppkg           the leftmost package, i.e. pkg1, or NULL if no packages
      */
-    final static DsymbolTable resolve(Identifiers* packages, Dsymbol* pparent, Package* ppkg)
+    static DsymbolTable resolve(Identifiers* packages, Dsymbol* pparent, Package* ppkg)
     {
         DsymbolTable dst = Module.modules;
         Dsymbol parent = null;
@@ -187,7 +186,7 @@ public:
         return dst;
     }
 
-    final Package isPackage()
+    override final inout(Package) isPackage() inout
     {
         return this;
     }
@@ -205,25 +204,23 @@ public:
      * Returns:
      *  see description
      */
-    final bool isAncestorPackageOf(Package pkg)
+    final bool isAncestorPackageOf(const Package pkg) const
     {
-        while (pkg)
-        {
-            if (this == pkg)
-                return true;
-            if (!pkg.parent)
-                break;
-            pkg = pkg.parent.isPackage();
-        }
-        return false;
+        if (this == pkg)
+            return true;
+        if (!pkg || !pkg.parent)
+            return false;
+        return isAncestorPackageOf(pkg.parent.isPackage());
     }
 
-    final void semantic(Scope* sc)
+    override final void semantic(Scope* sc)
     {
     }
 
-    Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
+    override Dsymbol search(Loc loc, Identifier ident, int flags = SearchLocalsOnly)
     {
+        //printf("%s Package.search('%s', flags = x%x)\n", toChars(), ident.toChars(), flags);
+        flags &= ~SearchLocalsOnly;  // searching an import is always transitive
         if (!isModule() && mod)
         {
             // Prefer full package name.
@@ -236,7 +233,7 @@ public:
         return ScopeDsymbol.search(loc, ident, flags);
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
@@ -251,15 +248,17 @@ public:
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class Module : Package
 {
-public:
     extern (C++) static __gshared Module rootModule;
     extern (C++) static __gshared DsymbolTable modules; // symbol table of all modules
-    extern (C++) static __gshared Modules amodules; // array of all modules
-    extern (C++) static __gshared Dsymbols deferred; // deferred Dsymbol's needing semantic() run on them
-    extern (C++) static __gshared Dsymbols deferred3; // deferred Dsymbol's needing semantic3() run on them
-    extern (C++) static __gshared uint dprogress; // progress resolving the deferred list
+    extern (C++) static __gshared Modules amodules;     // array of all modules
+    extern (C++) static __gshared Dsymbols deferred;    // deferred Dsymbol's needing semantic() run on them
+    extern (C++) static __gshared Dsymbols deferred2;   // deferred Dsymbol's needing semantic2() run on them
+    extern (C++) static __gshared Dsymbols deferred3;   // deferred Dsymbol's needing semantic3() run on them
+    extern (C++) static __gshared uint dprogress;       // progress resolving the deferred list
 
     static void _init()
     {
@@ -267,18 +266,20 @@ public:
     }
 
     extern (C++) static __gshared AggregateDeclaration moduleinfo;
-    const(char)* arg; // original argument name
-    ModuleDeclaration* md; // if !NULL, the contents of the ModuleDeclaration declaration
-    File* srcfile; // input source file
-    File* objfile; // output .obj file
-    File* hdrfile; // 'header' file
-    File* docfile; // output documentation file
-    uint errors; // if any errors in file
-    uint numlines; // number of lines in source file
-    int isDocFile; // if it is a documentation input file, not D source
-    bool isPackageFile; // if it is a package.d
+
+    const(char)* arg;           // original argument name
+    ModuleDeclaration* md;      // if !=null, the contents of the ModuleDeclaration declaration
+    File* srcfile;              // input source file
+    File* objfile;              // output .obj file
+    File* hdrfile;              // 'header' file
+    File* docfile;              // output documentation file
+    uint errors;                // if any errors in file
+    uint numlines;              // number of lines in source file
+    int isDocFile;              // if it is a documentation input file, not D source
+    bool isPackageFile;         // if it is a package.d
     int needmoduleinfo;
-    int selfimports; // 0: don't know, 1: does not, 2: does
+
+    int selfimports;            // 0: don't know, 1: does not, 2: does
 
     /*************************************
      * Return true if module imports itself.
@@ -297,7 +298,7 @@ public:
         return selfimports == 2;
     }
 
-    int rootimports; // 0: don't know, 1: does not, 2: does
+    int rootimports;            // 0: don't know, 1: does not, 2: does
 
     /*************************************
      * Return true if module imports root module.
@@ -327,71 +328,38 @@ public:
 
     int insearch;
     Identifier searchCacheIdent;
-    Dsymbol searchCacheSymbol; // cached value of search
-    int searchCacheFlags; // cached flags
+    Dsymbol searchCacheSymbol;  // cached value of search
+    int searchCacheFlags;       // cached flags
+
     // module from command line we're imported from,
     // i.e. a module that will be taken all the
     // way to an object file
     Module importedFrom;
-    Dsymbols* decldefs; // top level declarations for this Module
-    Modules aimports; // all imported modules
-    uint debuglevel; // debug level
-    Strings* debugids; // debug identifiers
-    Strings* debugidsNot; // forward referenced debug identifiers
-    uint versionlevel; // version level
-    Strings* versionids; // version identifiers
-    Strings* versionidsNot; // forward referenced version identifiers
-    Macro* macrotable; // document comment macros
-    Escape* escapetable; // document comment escapes
-    size_t nameoffset; // offset of module name from start of ModuleInfo
-    size_t namelen; // length of module name in characters
+
+    Dsymbols* decldefs;         // top level declarations for this Module
+
+    Modules aimports;           // all imported modules
+
+    uint debuglevel;            // debug level
+    Strings* debugids;          // debug identifiers
+    Strings* debugidsNot;       // forward referenced debug identifiers
+
+    uint versionlevel;          // version level
+    Strings* versionids;        // version identifiers
+    Strings* versionidsNot;     // forward referenced version identifiers
+
+    Macro* macrotable;          // document comment macros
+    Escape* escapetable;        // document comment escapes
+
+    size_t nameoffset;          // offset of module name from start of ModuleInfo
+    size_t namelen;             // length of module name in characters
 
     extern (D) this(const(char)* filename, Identifier ident, int doDocComment, int doHdrGen)
     {
         super(ident);
         const(char)* srcfilename;
-        //    printf("Module::Module(filename = '%s', ident = '%s')\n", filename, ident->toChars());
+        //printf("Module::Module(filename = '%s', ident = '%s')\n", filename, ident->toChars());
         this.arg = filename;
-        md = null;
-        errors = 0;
-        numlines = 0;
-        members = null;
-        isDocFile = 0;
-        isPackageFile = false;
-        needmoduleinfo = 0;
-        selfimports = 0;
-        rootimports = 0;
-        insearch = 0;
-        searchCacheIdent = null;
-        searchCacheSymbol = null;
-        searchCacheFlags = 0;
-        decldefs = null;
-        massert = null;
-        munittest = null;
-        marray = null;
-        sictor = null;
-        sctor = null;
-        sdtor = null;
-        ssharedctor = null;
-        sshareddtor = null;
-        stest = null;
-        sfilename = null;
-        importedFrom = null;
-        srcfile = null;
-        docfile = null;
-        debuglevel = 0;
-        debugids = null;
-        debugidsNot = null;
-        versionlevel = 0;
-        versionids = null;
-        versionidsNot = null;
-        macrotable = null;
-        escapetable = null;
-        doppelganger = 0;
-        cov = null;
-        covb = null;
-        nameoffset = 0;
-        namelen = 0;
         srcfilename = FileName.defaultExt(filename, global.mars_ext);
         if (global.run_noext && global.params.run && !FileName.ext(filename) && FileName.exists(srcfilename) == 0 && FileName.exists(filename) == 1)
         {
@@ -424,7 +392,7 @@ public:
         //  foo.bar.baz
         // into:
         //  foo\bar\baz
-        char* filename = ident.toChars();
+        auto filename = ident.toChars();
         if (packages && packages.dim)
         {
             OutBuffer buf;
@@ -443,7 +411,7 @@ public:
             }
             buf.writestring(filename);
             buf.writeByte(0);
-            filename = cast(char*)buf.extractData();
+            filename = buf.extractData();
         }
         auto m = new Module(filename, ident, 0, 0);
         m.loc = loc;
@@ -472,7 +440,7 @@ public:
         return m;
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return "module";
     }
@@ -568,7 +536,7 @@ public:
     Module parse()
     {
         //printf("Module::parse(srcfile='%s') this=%p\n", srcfile->name->toChars(), this);
-        char* srcname = srcfile.name.toChars();
+        const(char)* srcname = srcfile.name.toChars();
         //printf("Module::parse(srcname = '%s')\n", srcname);
         isPackageFile = (strcmp(srcfile.name.name(), "package.d") == 0);
         char* buf = cast(char*)srcfile.buffer;
@@ -619,7 +587,7 @@ public:
                     }
                     dbuf.writeByte(0); // add 0 as sentinel for scanner
                     buflen = dbuf.offset - 1; // don't include sentinel in count
-                    buf = cast(char*)dbuf.extractData();
+                    buf = dbuf.extractData();
                 }
                 else
                 {
@@ -676,7 +644,7 @@ public:
                     }
                     dbuf.writeByte(0); // add 0 as sentinel for scanner
                     buflen = dbuf.offset - 1; // don't include sentinel in count
-                    buf = cast(char*)dbuf.extractData();
+                    buf = dbuf.extractData();
                 }
             }
             else if (buf[0] == 0xFE && buf[1] == 0xFF)
@@ -753,8 +721,21 @@ public:
                 setDocfile();
             return this;
         }
+        /* If it has the extension ".dd", it is also a documentation
+         * source file. Documentation source files may begin with "Ddoc"
+         * but do not have to if they have the .dd extension.
+         * See: https://issues.dlang.org/show_bug.cgi?id=15465
+         */
+        if (FileName.equalsExt(arg, "dd"))
         {
-            scope Parser p = new Parser(this, buf, buflen, docfile !is null);
+            comment = buf; // the optional Ddoc, if present, is handled above.
+            isDocFile = 1;
+            if (!docfile)
+                setDocfile();
+            return this;
+        }
+        {
+            scope Parser p = new Parser(this, buf[0 .. buflen], docfile !is null);
             p.nextToken();
             members = p.parseModule();
             md = p.md;
@@ -793,17 +774,17 @@ public:
             dst = modules; // and so this module goes into global module symbol table
             /* Check to see if module name is a valid identifier
              */
-            if (!Lexer.isValidIdentifier(this.ident.toChars()))
+            if (!Identifier.isValidIdentifier(this.ident.toChars()))
                 error("has non-identifier characters in filename, use module declaration instead");
         }
         // Add internal used functions in 'object' module members.
         if (!parent && ident == Id.object)
         {
-            static __gshared const(char)* code_ArrayEq = "bool _ArrayEq(T1, T2)(T1[] a, T2[] b) {\n if (a.length != b.length) return false;\n foreach (size_t i; 0 .. a.length) { if (a[i] != b[i]) return false; }\n return true; }\n";
-            static __gshared const(char)* code_ArrayPostblit = "void _ArrayPostblit(T)(T[] a) { foreach (ref T e; a) e.__xpostblit(); }\n";
-            static __gshared const(char)* code_ArrayDtor = "void _ArrayDtor(T)(T[] a) { foreach_reverse (ref T e; a) e.__xdtor(); }\n";
-            static __gshared const(char)* code_xopEquals = "bool _xopEquals(in void*, in void*) { throw new Error(\"TypeInfo.equals is not implemented\"); }\n";
-            static __gshared const(char)* code_xopCmp = "bool _xopCmp(in void*, in void*) { throw new Error(\"TypeInfo.compare is not implemented\"); }\n";
+            immutable code_ArrayEq = "bool _ArrayEq(T1, T2)(T1[] a, T2[] b) {\n if (a.length != b.length) return false;\n foreach (size_t i; 0 .. a.length) { if (a[i] != b[i]) return false; }\n return true; }\n";
+            immutable code_ArrayPostblit = "void _ArrayPostblit(T)(T[] a) { foreach (ref T e; a) e.__xpostblit(); }\n";
+            immutable code_ArrayDtor = "void _ArrayDtor(T)(T[] a) { foreach_reverse (ref T e; a) e.__xdtor(); }\n";
+            immutable code_xopEquals = "bool _xopEquals(in void*, in void*) { throw new Error(\"TypeInfo.equals is not implemented\"); }\n";
+            immutable code_xopCmp = "bool _xopCmp(in void*, in void*) { throw new Error(\"TypeInfo.compare is not implemented\"); }\n";
             Identifier arreq = Id._ArrayEq;
             Identifier xopeq = Identifier.idPool("_xopEquals");
             Identifier xopcmp = Identifier.idPool("_xopCmp");
@@ -821,29 +802,29 @@ public:
             }
             if (arreq)
             {
-                scope Parser p = new Parser(loc, this, code_ArrayEq, strlen(cast(const(char)*)code_ArrayEq), 0);
+                scope Parser p = new Parser(loc, this, code_ArrayEq, false);
                 p.nextToken();
                 members.append(p.parseDeclDefs(0));
             }
             {
-                scope Parser p = new Parser(loc, this, code_ArrayPostblit, strlen(cast(const(char)*)code_ArrayPostblit), 0);
+                scope Parser p = new Parser(loc, this, code_ArrayPostblit, false);
                 p.nextToken();
                 members.append(p.parseDeclDefs(0));
             }
             {
-                scope Parser p = new Parser(loc, this, code_ArrayDtor, strlen(cast(const(char)*)code_ArrayDtor), 0);
+                scope Parser p = new Parser(loc, this, code_ArrayDtor, false);
                 p.nextToken();
                 members.append(p.parseDeclDefs(0));
             }
             if (xopeq)
             {
-                scope Parser p = new Parser(loc, this, code_xopEquals, strlen(cast(const(char)*)code_xopEquals), 0);
+                scope Parser p = new Parser(loc, this, code_xopEquals, false);
                 p.nextToken();
                 members.append(p.parseDeclDefs(0));
             }
             if (xopcmp)
             {
-                scope Parser p = new Parser(loc, this, code_xopCmp, strlen(cast(const(char)*)code_xopCmp), 0);
+                scope Parser p = new Parser(loc, this, code_xopCmp, false);
                 p.nextToken();
                 members.append(p.parseDeclDefs(0));
             }
@@ -873,6 +854,7 @@ public:
             p.parent = this.parent;
             p.isPkgMod = PKGmodule;
             p.mod = this;
+            p.tag = this.tag; // reuse the same package tag
             p.symtab = new DsymbolTable();
             s = p;
         }
@@ -903,6 +885,7 @@ public:
                      */
                     pkg.isPkgMod = PKGmodule;
                     pkg.mod = this;
+                    pkg.tag = this.tag; // reuse the same package tag
                 }
                 else
                     error(md ? md.loc : loc, "from file %s conflicts with package name %s", srcname, pkg.toChars());
@@ -918,7 +901,7 @@ public:
         return this;
     }
 
-    void importAll(Scope* prevsc)
+    override void importAll(Scope* prevsc)
     {
         //printf("+Module::importAll(this = %p, '%s'): parent = %p\n", this, toChars(), parent);
         if (_scope)
@@ -1001,7 +984,7 @@ public:
         for (size_t i = 0; i < members.dim; i++)
         {
             Dsymbol s = (*members)[i];
-            //printf("\tModule('%s'): '%s'.semantic()\n", toChars(), s->toChars());
+            //printf("\tModule('%s'): '%s'.semantic()\n", toChars(), s.toChars());
             s.semantic(sc);
             runDeferredSemantic();
         }
@@ -1084,25 +1067,35 @@ public:
         return needmoduleinfo || global.params.cov;
     }
 
-    Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
+    override Dsymbol search(Loc loc, Identifier ident, int flags = SearchLocalsOnly)
     {
         /* Since modules can be circularly referenced,
          * need to stop infinite recursive searches.
          * This is done with the cache.
          */
-        //printf("%s Module::search('%s', flags = %d) insearch = %d\n", toChars(), ident->toChars(), flags, insearch);
+        //printf("%s Module.search('%s', flags = x%x) insearch = %d\n", toChars(), ident.toChars(), flags, insearch);
         if (insearch)
             return null;
+
+        /* Qualified module searches always search their imports,
+         * even if SearchLocalsOnly
+         */
+        if (!(flags & SearchUnqualifiedModule))
+            flags &= ~(SearchUnqualifiedModule | SearchLocalsOnly);
+
         if (searchCacheIdent == ident && searchCacheFlags == flags)
         {
             //printf("%s Module::search('%s', flags = %d) insearch = %d searchCacheSymbol = %s\n",
             //        toChars(), ident->toChars(), flags, insearch, searchCacheSymbol ? searchCacheSymbol->toChars() : "null");
             return searchCacheSymbol;
         }
+
         uint errors = global.errors;
+
         insearch = 1;
         Dsymbol s = ScopeDsymbol.search(loc, ident, flags);
         insearch = 0;
+
         if (errors == global.errors)
         {
             // Bugzilla 10752: We can cache the result only when it does not cause
@@ -1114,7 +1107,7 @@ public:
         return s;
     }
 
-    Dsymbol symtabInsert(Dsymbol s)
+    override Dsymbol symtabInsert(Dsymbol s)
     {
         searchCacheIdent = null; // symbol is inserted, so invalidate cache
         return Package.symtabInsert(s);
@@ -1133,15 +1126,20 @@ public:
      */
     static void addDeferredSemantic(Dsymbol s)
     {
-        // Don't add it if it is already there
-        for (size_t i = 0; i < deferred.dim; i++)
-        {
-            Dsymbol sd = deferred[i];
-            if (sd == s)
-                return;
-        }
-        //printf("Module::addDeferredSemantic('%s')\n", s->toChars());
+        //printf("Module::addDeferredSemantic('%s')\n", s.toChars());
         deferred.push(s);
+    }
+
+    static void addDeferredSemantic2(Dsymbol s)
+    {
+        //printf("Module::addDeferredSemantic2('%s')\n", s.toChars());
+        deferred2.push(s);
+    }
+
+    static void addDeferredSemantic3(Dsymbol s)
+    {
+        //printf("Module::addDeferredSemantic3('%s')\n", s.toChars());
+        deferred3.push(s);
     }
 
     /******************************************
@@ -1151,11 +1149,13 @@ public:
     {
         if (dprogress == 0)
             return;
+
         static __gshared int nested;
         if (nested)
             return;
         //if (deferred.dim) printf("+Module::runDeferredSemantic(), len = %d\n", deferred.dim);
         nested++;
+
         size_t len;
         do
         {
@@ -1163,6 +1163,7 @@ public:
             len = deferred.dim;
             if (!len)
                 break;
+
             Dsymbol* todo;
             Dsymbol* todoalloc = null;
             Dsymbol tmp;
@@ -1178,11 +1179,12 @@ public:
             }
             memcpy(todo, deferred.tdata(), len * Dsymbol.sizeof);
             deferred.setDim(0);
+
             for (size_t i = 0; i < len; i++)
             {
                 Dsymbol s = todo[i];
                 s.semantic(null);
-                //printf("deferred: %s, parent = %s\n", s->toChars(), s->parent->toChars());
+                //printf("deferred: %s, parent = %s\n", s.toChars(), s.parent.toChars());
             }
             //printf("\tdeferred.dim = %d, len = %d, dprogress = %d\n", deferred.dim, len, dprogress);
             if (todoalloc)
@@ -1193,26 +1195,33 @@ public:
         //printf("-Module::runDeferredSemantic(), len = %d\n", deferred.dim);
     }
 
-    static void addDeferredSemantic3(Dsymbol s)
+    static void runDeferredSemantic2()
     {
-        // Don't add it if it is already there
-        for (size_t i = 0; i < deferred3.dim; i++)
+        Module.runDeferredSemantic();
+
+        Dsymbols* a = &Module.deferred2;
+        for (size_t i = 0; i < a.dim; i++)
         {
-            Dsymbol sd = deferred3[i];
-            if (sd == s)
-                return;
+            Dsymbol s = (*a)[i];
+            //printf("[%d] %s semantic2a\n", i, s.toPrettyChars());
+            s.semantic2(null);
+
+            if (global.errors)
+                break;
         }
-        deferred3.push(s);
     }
 
     static void runDeferredSemantic3()
     {
+        Module.runDeferredSemantic2();
+
         Dsymbols* a = &Module.deferred3;
         for (size_t i = 0; i < a.dim; i++)
         {
             Dsymbol s = (*a)[i];
-            //printf("[%d] %s semantic3a\n", i, s->toPrettyChars());
+            //printf("[%d] %s semantic3a\n", i, s.toPrettyChars());
             s.semantic3(null);
+
             if (global.errors)
                 break;
         }
@@ -1286,36 +1295,37 @@ public:
     Symbol* munittest; // module unittest failure function
     Symbol* marray; // module array bounds function
 
-    Module isModule()
+    override inout(Module) isModule() inout
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 struct ModuleDeclaration
 {
     Loc loc;
     Identifier id;
-    Identifiers* packages; // array of Identifier's representing packages
-    bool isdeprecated; // if it is a deprecated module
+    Identifiers* packages;  // array of Identifier's representing packages
+    bool isdeprecated;      // if it is a deprecated module
     Expression msg;
 
-    /* =========================== ModuleDeclaration ===================== */
-    extern (D) this(Loc loc, Identifiers* packages, Identifier id)
+    extern (D) this(Loc loc, Identifiers* packages, Identifier id, Expression msg, bool isdeprecated)
     {
         this.loc = loc;
         this.packages = packages;
         this.id = id;
-        this.isdeprecated = false;
-        this.msg = null;
+        this.msg = msg;
+        this.isdeprecated = isdeprecated;
     }
 
-    extern (C++) char* toChars()
+    extern (C++) const(char)* toChars()
     {
         OutBuffer buf;
         if (packages && packages.dim)

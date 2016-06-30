@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -17,13 +17,12 @@ enum LOG = false;
  * Reads an object module from base[0..buflen] and passes the names
  * of any exported symbols to (*pAddSymbol)().
  * Input:
- *      pctx            context pointer, pass to *pAddSymbol
  *      pAddSymbol      function to pass the names to
  *      base[0..buflen] contains contents of object module
  *      module_name     name of the object module (used for error messages)
  *      loc             location to use for error printing
  */
-extern (C++) void scanMSCoffObjModule(void* pctx, void function(void* pctx, char* name, int pickAny) pAddSymbol, void* base, size_t buflen, const(char)* module_name, Loc loc)
+void scanMSCoffObjModule(void delegate(char* name, int pickAny) pAddSymbol, void* base, size_t buflen, const(char)* module_name, Loc loc)
 {
     static if (LOG)
     {
@@ -49,7 +48,7 @@ extern (C++) void scanMSCoffObjModule(void* pctx, void function(void* pctx, char
         header_old = cast(IMAGE_FILE_HEADER*)malloc(IMAGE_FILE_HEADER.sizeof);
         memcpy(header_old, buf, IMAGE_FILE_HEADER.sizeof);
         header = cast(BIGOBJ_HEADER*)malloc(BIGOBJ_HEADER.sizeof);
-        memset(header, 0, BIGOBJ_HEADER.sizeof);
+        *header = BIGOBJ_HEADER.init;
         header.Machine = header_old.Machine;
         header.NumberOfSections = header_old.NumberOfSections;
         header.TimeDateStamp = header_old.TimeDateStamp;
@@ -170,7 +169,7 @@ extern (C++) void scanMSCoffObjModule(void* pctx, void function(void* pctx, char
         default:
             continue;
         }
-        (*pAddSymbol)(pctx, p, 1);
+        pAddSymbol(p, 1);
     }
 }
 
@@ -182,13 +181,13 @@ struct BIGOBJ_HEADER
     WORD Version;               // 2
     WORD Machine;               // identifies type of target machine
     DWORD TimeDateStamp;        // creation date, number of seconds since 1970
-    BYTE  UUID[16];             //  { '\xc7', '\xa1', '\xba', '\xd1', '\xee', '\xba', '\xa9', '\x4b',
+    BYTE[16]  UUID;             //  { '\xc7', '\xa1', '\xba', '\xd1', '\xee', '\xba', '\xa9', '\x4b',
                                 //    '\xaf', '\x20', '\xfa', '\xf6', '\x6a', '\xa4', '\xdc', '\xb8' };
-    DWORD unused[4];            // { 0, 0, 0, 0 }
+    DWORD[4] unused;            // { 0, 0, 0, 0 }
     DWORD NumberOfSections;     // number of sections
     DWORD PointerToSymbolTable; // file offset of symbol table
     DWORD NumberOfSymbols;      // number of entries in the symbol table
-};
+}
 
 align(1)
 struct IMAGE_FILE_HEADER
@@ -218,8 +217,7 @@ enum IMAGE_SYM_CLASS_LABEL    = 6;
 enum IMAGE_SYM_CLASS_FUNCTION = 101;
 enum IMAGE_SYM_CLASS_FILE     = 103;
 
-align(1)
-struct SymbolTable32
+align(1) struct SymbolTable32
 {
     union
     {
@@ -228,8 +226,9 @@ struct SymbolTable32
         {
             DWORD Zeros;
             DWORD Offset;
-        };
-    };
+        }
+    }
+
     DWORD Value;
     DWORD SectionNumber;
     WORD Type;
@@ -237,8 +236,7 @@ struct SymbolTable32
     BYTE NumberOfAuxSymbols;
 }
 
-align(1)
-struct SymbolTable
+align(1) struct SymbolTable
 {
     BYTE[SYMNMLEN] Name;
     DWORD Value;

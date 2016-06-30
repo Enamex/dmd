@@ -2160,7 +2160,7 @@ void test5473()
         static void g(){};
     }
 
-    void dummy(){}
+    void dummy();
     alias typeof(dummy) VoidFunc;
 
     const C c = new C;
@@ -2677,6 +2677,25 @@ void test11966()
 }
 
 /************************************/
+// 14788
+
+auto make14788(K, V)(inout V[K] aa)
+{
+    static struct Result
+    {
+        V[K] aa;
+        ref front() inout { return aa[1]; }
+    }
+    return inout Result(aa);
+}
+
+void test14788()
+{
+    int[int] aa = [1:1];
+    make14788(aa).front();
+}
+
+/************************************/
 // 12089
 
 void foo12089(inout(char[]) a)
@@ -2710,11 +2729,11 @@ void test12524(inout(int))
 /************************************/
 // 6941
 
-static assert((const(shared(int[])[])).stringof == "const(shared(int[])[])");	// fail
+static assert((const(shared(int[])[])).stringof == "const(shared(int[])[])");   // fail
 static assert((const(shared(int[])[])).stringof != "const(shared(const(int[]))[])"); // fail
 
-static assert((inout(shared(int[])[])).stringof == "inout(shared(int[])[])");	// fail
-static assert((inout(shared(int[])[])).stringof != "inout(shared(inout(int[]))[])");	// fail
+static assert((inout(shared(int[])[])).stringof == "inout(shared(int[])[])");   // fail
+static assert((inout(shared(int[])[])).stringof != "inout(shared(inout(int[]))[])");    // fail
 
 /************************************/
 // 6872
@@ -3408,7 +3427,7 @@ inout(int)* function(inout(int)*) fptr10761(inout(int)*)
 {
     static inout(int)* screwUp(inout(int)* x) { return x; }
     auto fp = &screwUp;
-    static assert(is(typeof(fp) == inout(int)* function(inout(int)*)));
+    static assert(is(typeof(fp) == inout(int)* function(inout(int)*) pure nothrow @nogc @safe));
     return fp;
 }
 
@@ -3416,7 +3435,7 @@ inout(int)* delegate(inout(int)*) nest10761(inout(int)* x)
 {
     inout(int)* screwUp(inout(int)* _) { return x; }
     auto dg = &screwUp;
-    static assert(is(typeof(dg) == inout(int)* delegate(inout(int)*)));
+    static assert(is(typeof(dg) == inout(int)* delegate(inout(int)*) pure nothrow @nogc @safe));
     return dg;
 }
 

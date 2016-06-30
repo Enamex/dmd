@@ -27,6 +27,14 @@
 static char __file__[] = __FILE__;      /* for tassert.h                */
 #include        "tassert.h"
 
+/*********************************
+ */
+CodeBuilder::CodeBuilder(code *c)
+{
+    head = c;
+    pTail = c ? &code_last(c)->next : &head;
+}
+
 /*************************************
  * Handy function to answer the question: who the heck is generating this piece of code?
  */
@@ -154,6 +162,57 @@ code * cat4(code *c1,code *c2,code *c3,code *c4)
 code * cat6(code *c1,code *c2,code *c3,code *c4,code *c5,code *c6)
 { return cat(cat4(c1,c2,c3,c4),cat(c5,c6)); }
 
+/************************************
+ * Concatenate code.
+ */
+void CodeBuilder::append(CodeBuilder& cdb)
+{
+    if (cdb.head)
+    {
+        *pTail = cdb.head;
+        pTail = cdb.pTail;
+    }
+}
+
+void CodeBuilder::append(CodeBuilder& cdb1, CodeBuilder& cdb2)
+{
+    append(cdb1);
+    append(cdb2);
+}
+
+void CodeBuilder::append(CodeBuilder& cdb1, CodeBuilder& cdb2, CodeBuilder& cdb3)
+{
+    append(cdb1);
+    append(cdb2);
+    append(cdb3);
+}
+
+void CodeBuilder::append(CodeBuilder& cdb1, CodeBuilder& cdb2, CodeBuilder& cdb3, CodeBuilder& cdb4)
+{
+    append(cdb1);
+    append(cdb2);
+    append(cdb3);
+    append(cdb4);
+}
+
+void CodeBuilder::append(CodeBuilder& cdb1, CodeBuilder& cdb2, CodeBuilder& cdb3, CodeBuilder& cdb4, CodeBuilder& cdb5)
+{
+    append(cdb1);
+    append(cdb2);
+    append(cdb3);
+    append(cdb4);
+    append(cdb5);
+}
+
+void CodeBuilder::append(code *c)
+{
+    if (c)
+    {
+        CodeBuilder cdb(c);
+        append(cdb);
+    }
+}
+
 /*****************************
  * Add code to end of linked list.
  * Note that unused operands are garbage.
@@ -188,6 +247,25 @@ code *gen(code *c,code *cs)
     return ce;
 }
 
+void CodeBuilder::gen(code *cs)
+{
+#ifdef DEBUG                            /* this is a high usage routine */
+    assert(cs);
+#endif
+#if TX86
+    assert(I64 || cs->Irex == 0);
+#endif
+    code* ce = code_malloc();
+    *ce = *cs;
+    //printf("ce = %p %02x\n", ce, ce->Iop);
+    ccheck(ce);
+    simplify_code(ce);
+    code_next(ce) = CNIL;
+
+    *pTail = ce;
+    pTail = &ce->next;
+}
+
 code *gen1(code *c,unsigned op)
 { code *ce,*cstart;
 
@@ -206,6 +284,19 @@ code *gen1(code *c,unsigned op)
   return ce;
 }
 
+void CodeBuilder::gen1(unsigned op)
+{
+    code *ce = code_calloc();
+    ce->Iop = op;
+    ccheck(ce);
+#if TX86
+    assert(op != LEA);
+#endif
+
+    *pTail = ce;
+    pTail = &ce->next;
+}
+
 #if TX86
 code *gen2(code *c,unsigned op,unsigned rm)
 { code *ce,*cstart;
@@ -221,6 +312,17 @@ code *gen2(code *c,unsigned op,unsigned rm)
         code_next(c) = ce;                      /* link into list       */
   }
   return cstart;
+}
+
+void CodeBuilder::gen2(unsigned op, unsigned rm)
+{
+    code *ce = code_calloc();
+    ce->Iop = op;
+    ce->Iea = rm;
+    ccheck(ce);
+
+    *pTail = ce;
+    pTail = &ce->next;
 }
 
 code *gen2sib(code *c,unsigned op,unsigned rm,unsigned sib)
@@ -242,6 +344,21 @@ code *gen2sib(code *c,unsigned op,unsigned rm,unsigned sib)
   }
   return cstart;
 }
+
+void CodeBuilder::gen2sib(unsigned op, unsigned rm, unsigned sib)
+{
+    code *ce = code_calloc();
+    ce->Iop = op;
+    ce->Irm = rm;
+    ce->Isib = sib;
+    ce->Irex = (rm | (sib & (REX_B << 16))) >> 16;
+    if (sib & (REX_R << 16))
+        ce->Irex |= REX_X;
+    ccheck(ce);
+
+    *pTail = ce;
+    pTail = &ce->next;
+}
 #endif
 
 /********************************
@@ -260,6 +377,19 @@ code *genasm(code *c,char *s,unsigned slen)
     return cat(c,ce);
 }
 
+void CodeBuilder::genasm(char *s, unsigned slen)
+{
+    code *ce = code_calloc();
+    ce->Iop = ASM;
+    ce->IFL1 = FLasm;
+    ce->IEV1.as.len = slen;
+    ce->IEV1.as.bytes = (char *) mem_malloc(slen);
+    memcpy(ce->IEV1.as.bytes,s,slen);
+
+    *pTail = ce;
+    pTail = &ce->next;
+}
+
 #if TX86
 code *gencs(code *c,unsigned op,unsigned ea,unsigned FL2,symbol *s)
 {   code cs;
@@ -274,6 +404,19 @@ code *gencs(code *c,unsigned op,unsigned ea,unsigned FL2,symbol *s)
     return gen(c,&cs);
 }
 
+void CodeBuilder::gencs(unsigned op, unsigned ea, unsigned FL2, symbol *s)
+{
+    code cs;
+    cs.Iop = op;
+    cs.Iea = ea;
+    ccheck(&cs);
+    cs.IFL2 = FL2;
+    cs.IEVsym2 = s;
+    cs.IEVoffset2 = 0;
+
+    gen(&cs);
+}
+
 code *genc2(code *c,unsigned op,unsigned ea,targ_size_t EV2)
 {   code cs;
 
@@ -284,6 +427,19 @@ code *genc2(code *c,unsigned op,unsigned ea,targ_size_t EV2)
     cs.IFL2 = FLconst;
     cs.IEV2.Vsize_t = EV2;
     return gen(c,&cs);
+}
+
+void CodeBuilder::genc2(unsigned op, unsigned ea, targ_size_t EV2)
+{
+    code cs;
+    cs.Iop = op;
+    cs.Iea = ea;
+    ccheck(&cs);
+    cs.Iflags = CFoff;
+    cs.IFL2 = FLconst;
+    cs.IEV2.Vsize_t = EV2;
+
+    gen(&cs);
 }
 
 /*****************
@@ -301,6 +457,20 @@ code *genc1(code *c,unsigned op,unsigned ea,unsigned FL1,targ_size_t EV1)
     cs.IFL1 = FL1;
     cs.IEV1.Vsize_t = EV1;
     return gen(c,&cs);
+}
+
+void CodeBuilder::genc1(unsigned op, unsigned ea, unsigned FL1, targ_size_t EV1)
+{
+    code cs;
+    assert(FL1 < FLMAX);
+    cs.Iop = op;
+    cs.Iflags = CFoff;
+    cs.Iea = ea;
+    ccheck(&cs);
+    cs.IFL1 = FL1;
+    cs.IEV1.Vsize_t = EV1;
+
+    gen(&cs);
 }
 
 /*****************
@@ -322,6 +492,23 @@ code *genc(code *c,unsigned op,unsigned ea,unsigned FL1,targ_size_t EV1,unsigned
     cs.IEV2.Vsize_t = EV2;
     return gen(c,&cs);
 }
+
+void CodeBuilder::genc(unsigned op, unsigned ea, unsigned FL1, targ_size_t EV1, unsigned FL2, targ_size_t EV2)
+{
+    code cs;
+    assert(FL1 < FLMAX);
+    cs.Iop = op;
+    cs.Iea = ea;
+    ccheck(&cs);
+    cs.Iflags = CFoff;
+    cs.IFL1 = FL1;
+    cs.IEV1.Vsize_t = EV1;
+    assert(FL2 < FLMAX);
+    cs.IFL2 = FL2;
+    cs.IEV2.Vsize_t = EV2;
+
+    gen(&cs);
+}
 #endif
 
 /********************************
@@ -337,6 +524,15 @@ code *genlinnum(code *c,Srcpos srcpos)
     cs.Iop = ESCAPE | ESClinnum;
     cs.IEV1.Vsrcpos = srcpos;
     return gen(c,&cs);
+}
+
+void CodeBuilder::genlinnum(Srcpos srcpos)
+{
+    code cs;
+    //srcpos.print("genlinnum");
+    cs.Iop = ESCAPE | ESClinnum;
+    cs.IEV1.Vsrcpos = srcpos;
+    gen(&cs);
 }
 
 /******************************
@@ -375,6 +571,17 @@ code *genadjesp(code *c, int offset)
         return c;
 }
 
+void CodeBuilder::genadjesp(int offset)
+{
+    if (!I16 && offset)
+    {
+        code cs;
+        cs.Iop = ESCAPE | ESCadjesp;
+        cs.IEV1.Vint = offset;
+        gen(&cs);
+    }
+}
+
 #if TX86
 /********************************
  * Generate 'instruction' which tells the scheduler that the fpu stack has
@@ -393,6 +600,17 @@ code *genadjfpu(code *c, int offset)
     else
         return c;
 }
+
+void CodeBuilder::genadjfpu(int offset)
+{
+    if (!I16 && offset)
+    {
+        code cs;
+        cs.Iop = ESCAPE | ESCadjfpu;
+        cs.IEV1.Vint = offset;
+        gen(&cs);
+    }
+}
 #endif
 
 /********************************
@@ -402,6 +620,11 @@ code *genadjfpu(code *c, int offset)
 code *gennop(code *c)
 {
     return gen1(c,NOP);
+}
+
+void CodeBuilder::gennop()
+{
+    gen1(NOP);
 }
 
 
@@ -481,7 +704,7 @@ code *regwithvalue(code *c,regm_t regm,targ_size_t value,unsigned *preg,regm_t f
  */
 
 struct fixlist
-{   //symbol      *Lsymbol;       // symbol we don't know about
+{
     int         Lseg;           // where the fixup is going (CODE or DATA, never UDATA)
     int         Lflags;         // CFxxxx
     targ_size_t Loffset;        // addr of reference to symbol
@@ -491,11 +714,9 @@ struct fixlist
 #endif
     fixlist *Lnext;             // next in threaded list
 
-    static AArray *start;
     static int nodel;           // don't delete from within searchfixlist
 };
 
-AArray *fixlist::start = NULL;
 int fixlist::nodel = 0;
 
 /* The AArray, being hashed on the pointer value of the symbol s, is in a different
@@ -504,16 +725,130 @@ int fixlist::nodel = 0;
  * simple (and very slow) linear array. Handy for tracking down compiler issues, though.
  */
 #define FLARRAY 0
-#if FLARRAY
 struct Flarray
 {
+#if FLARRAY
     symbol *s;
     fixlist *fl;
+
+    static Flarray *flarray;
+    static size_t flarray_dim;
+    static size_t flarray_max;
+
+    static fixlist **add(symbol *s)
+    {
+        //printf("add %s\n", s->Sident);
+        fixlist **pv;
+        for (size_t i = 0; 1; i++)
+        {
+            assert(i <= flarray_dim);
+            if (i == flarray_dim)
+            {
+                if (flarray_dim == flarray_max)
+                {
+                    flarray_max = flarray_max * 2 + 1000;
+                    flarray = (Flarray *)mem_realloc(flarray, flarray_max * sizeof(flarray[0]));
+                }
+                flarray_dim += 1;
+                flarray[i].s = s;
+                flarray[i].fl = NULL;
+                pv = &flarray[i].fl;
+                break;
+            }
+            if (flarray[i].s == s)
+            {
+                pv = &flarray[i].fl;
+                break;
+            }
+        }
+        return pv;
+    }
+
+    static fixlist **search(symbol *s)
+    {
+        //printf("search %s\n", s->Sident);
+        fixlist **lp = NULL;
+        for (size_t i = 0; i < flarray_dim; i++)
+        {
+            if (flarray[i].s == s)
+            {
+                lp = &flarray[i].fl;
+                break;
+            }
+        }
+        return lp;
+    }
+
+    static void del(symbol *s)
+    {
+        //printf("del %s\n", s->Sident);
+        for (size_t i = 0; 1; i++)
+        {
+            assert(i < flarray_dim);
+            if (flarray[i].s == s)
+            {
+                if (i + 1 == flarray_dim)
+                    --flarray_dim;
+                else
+                    flarray[i].s = NULL;
+                break;
+            }
+        }
+    }
+
+    static void apply(int (*dg)(void *parameter, void *pkey, void *pvalue))
+    {
+        //printf("apply\n");
+        for (size_t i = 0; i < flarray_dim; i++)
+        {
+            fixlist::nodel++;
+            if (flarray[i].s)
+                (*dg)(NULL, &flarray[i].s, &flarray[i].fl);
+            fixlist::nodel--;
+        }
+    }
+#else
+    static AArray *start;
+
+    static fixlist **add(symbol *s)
+    {
+        if (!start)
+            start = new AArray(&ti_pvoid, sizeof(fixlist *));
+        return (fixlist **)start->get(&s);
+    }
+
+    static fixlist **search(symbol *s)
+    {
+        return (fixlist **)(start ? start->in(&s) : NULL);
+    }
+
+    static void del(symbol *s)
+    {
+        start->del(&s);
+    }
+
+    static void apply(int (*dg)(void *parameter, void *pkey, void *pvalue))
+    {
+        if (start)
+        {
+            fixlist::nodel++;
+            start->apply(NULL, dg);
+            fixlist::nodel--;
+#if TERMCODE
+            delete start;
+#endif
+            start = NULL;
+        }
+    }
+#endif
 };
 
-Flarray *flarray;
-size_t flarray_dim;
-size_t flarray_max;
+#if FLARRAY
+Flarray *Flarray::flarray;
+size_t Flarray::flarray_dim;
+size_t Flarray::flarray_max;
+#else
+AArray *Flarray::start = NULL;
 #endif
 
 /****************************
@@ -536,34 +871,7 @@ size_t addtofixlist(symbol *s,targ_size_t soffset,int seg,targ_size_t val,int fl
         ln->Lfuncsym = funcsym_p;
 #endif
 
-#if FLARRAY
-        fixlist **pv;
-        for (size_t i = 0; 1; i++)
-        {
-            if (i == flarray_dim)
-            {
-                if (flarray_dim == flarray_max)
-                {
-                    flarray_max = flarray_max * 2 + 1000;
-                    flarray = (Flarray *)mem_realloc(flarray, flarray_max * sizeof(flarray[0]));
-                }
-                flarray_dim += 1;
-                flarray[i].s = s;
-                flarray[i].fl = NULL;
-                pv = &flarray[i].fl;
-                break;
-            }
-            if (flarray[i].s == s)
-            {
-                pv = &flarray[i].fl;
-                break;
-            }
-        }
-#else
-        if (!fixlist::start)
-            fixlist::start = new AArray(&ti_pvoid, sizeof(fixlist *));
-        fixlist **pv = (fixlist **)fixlist::start->get(&s);
-#endif
+        fixlist **pv = Flarray::add(s);
         ln->Lnext = *pv;
         *pv = ln;
 
@@ -605,21 +913,7 @@ size_t addtofixlist(symbol *s,targ_size_t soffset,int seg,targ_size_t val,int fl
 void searchfixlist(symbol *s)
 {
     //printf("searchfixlist(%s)\n",s->Sident);
-    if (fixlist::start)
-    {
-#if FLARRAY
-        fixlist **lp = NULL;
-        size_t i;
-        for (i = 0; i < flarray_dim; i++)
-        {
-            if (flarray[i].s == s)
-            {   lp = &flarray[i].fl;
-                break;
-            }
-        }
-#else
-        fixlist **lp = (fixlist **)fixlist::start->in(&s);
-#endif
+        fixlist **lp = Flarray::search(s);
         if (lp)
         {   fixlist *p;
             while ((p = *lp) != NULL)
@@ -658,16 +952,9 @@ void searchfixlist(symbol *s)
             }
             if (!fixlist::nodel)
             {
-#if FLARRAY
-                flarray[i].s = NULL;
-                if (i + 1 == flarray_dim)
-                    flarray_dim -= 1;
-#else
-                fixlist::start->del(&s);
-#endif
+                Flarray::del(s);
             }
         }
-    }
 }
 
 /****************************
@@ -720,7 +1007,9 @@ STATIC int outfixlist_dg(void *parameter, void *pkey, void *pvalue)
                     // Put it in BSS
                     s->Sclass = SCstatic;
                     s->Sfl = FLunde;
-                    dtnzeros(&s->Sdt,type_size(s->Stype));
+                    DtBuilder dtb;
+                    dtb.nzeros(type_size(s->Stype));
+                    s->Sdt = dtb.finish();
                     outdata(s);
                     searchfixlist(s);
                     continue;
@@ -753,25 +1042,7 @@ STATIC int outfixlist_dg(void *parameter, void *pkey, void *pvalue)
 void outfixlist()
 {
     //printf("outfixlist()\n");
-#if FLARRAY
-    for (size_t i = 0; i < flarray_dim; i++)
-    {
-        fixlist::nodel++;
-        outfixlist_dg(NULL, &flarray[i].s, &flarray[i].fl);
-        fixlist::nodel--;
-    }
-#else
-    if (fixlist::start)
-    {
-        fixlist::nodel++;
-        fixlist::start->apply(NULL, &outfixlist_dg);
-        fixlist::nodel--;
-#if TERMCODE
-        delete fixlist::start;
-#endif
-        fixlist::start = NULL;
-    }
-#endif
+    Flarray::apply(&outfixlist_dg);
 }
 
 #endif // !SPP

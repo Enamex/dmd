@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -13,6 +13,7 @@ import core.stdc.string;
 import core.stdc.stdlib;
 import core.stdc.stdio;
 import core.stdc.stdarg;
+import core.stdc.config;
 import core.sys.posix.sys.stat;
 import core.sys.posix.unistd;
 import ddmd.globals;
@@ -23,9 +24,9 @@ import ddmd.root.outbuffer;
 import ddmd.root.stringtable;
 import ddmd.root.filename;
 import ddmd.root.port;
-import ddmd.mars;
 import ddmd.scanmach;
 import ddmd.errors;
+import ddmd.utils;
 
 enum LOG = false;
 
@@ -40,7 +41,6 @@ alias MachObjSymbols = Array!(MachObjSymbol*);
 
 extern (C++) final class LibMach : Library
 {
-public:
     File* libfile;
     MachObjModules objmodules; // MachObjModule[]
     MachObjSymbols objsymbols; // MachObjSymbol[]
@@ -48,7 +48,6 @@ public:
 
     extern (D) this()
     {
-        libfile = null;
         tab._init(14000);
     }
 
@@ -57,7 +56,7 @@ public:
      * and the filename.
      * Add default library file name extension.
      */
-    void setFilename(const(char)* dir, const(char)* filename)
+    override void setFilename(const(char)* dir, const(char)* filename)
     {
         static if (LOG)
         {
@@ -86,7 +85,7 @@ public:
      * If the buffer is NULL, use module_name as the file name
      * and load the file.
      */
-    void addObject(const(char)* module_name, void* buf, size_t buflen)
+    override void addObject(const(char)* module_name, void* buf, size_t buflen)
     {
         if (!module_name)
             module_name = "";
@@ -221,16 +220,15 @@ public:
                     if (m == objmodules.dim)
                     {
                         reason = __LINE__;
-                        goto Lcorrupt;
-                        // didn't find it
+                        goto Lcorrupt; // didn't find it
                     }
                     MachObjModule* om = objmodules[m];
                     //printf("\tom offset = x%x\n", (char *)om->base - (char *)buf);
                     if (moff == cast(char*)om.base - cast(char*)buf)
                     {
                         addSymbol(om, name, 1);
-                        //                  if (mstart == m)
-                        //                      mstart++;
+                        //if (mstart == m)
+                        //    mstart++;
                         break;
                     }
                 }
@@ -282,12 +280,12 @@ public:
     }
 
     /*****************************************************************************/
-    void addLibrary(void* buf, size_t buflen)
+    override void addLibrary(void* buf, size_t buflen)
     {
         addObject(null, buf, buflen);
     }
 
-    void write()
+    override void write()
     {
         if (global.params.verbose)
             fprintf(global.stdmsg, "library   %s\n", libfile.name.toChars());
@@ -309,7 +307,7 @@ public:
         version (none)
         {
             // let linker sort out duplicates
-            StringValue* s = tab.insert(name, strlen(name));
+            StringValue* s = tab.insert(name, strlen(name), null);
             if (!s)
             {
                 // already in table
@@ -350,25 +348,13 @@ private:
         {
             printf("LibMach::scanObjModule(%s)\n", om.name);
         }
-        struct Context
+
+        void addSymbol(char* name, int pickAny)
         {
-            LibMach lib;
-            MachObjModule* om;
-
-            extern (D) this(LibMach lib, MachObjModule* om)
-            {
-                this.lib = lib;
-                this.om = om;
-            }
-
-            extern (C++) static void addSymbol(void* pctx, char* name, int pickAny)
-            {
-                (cast(Context*)pctx).lib.addSymbol((cast(Context*)pctx).om, name, pickAny);
-            }
+            this.addSymbol(om, name, pickAny);
         }
 
-        auto ctx = Context(this, om);
-        scanMachObjModule(&ctx, &Context.addSymbol, om.base, om.length, om.name, loc);
+        scanMachObjModule(&addSymbol, om.base, om.length, om.name, loc);
     }
 
     /*****************************************************************************/
@@ -405,8 +391,8 @@ private:
             moffset += 8 + strlen(os.name) + 1;
         }
         moffset = (moffset + 3) & ~3;
-        //    if (moffset & 4)
-        //      moffset += 4;
+        //if (moffset & 4)
+        //    moffset += 4;
         uint hoffset = moffset;
         static if (LOG)
         {
@@ -474,8 +460,8 @@ private:
         }
         while (libbuf.offset & 3)
             libbuf.writeByte(0);
-        //    if (libbuf->offset & 4)
-        //      libbuf->write(pad, 4);
+        //if (libbuf->offset & 4)
+        //    libbuf->write(pad, 4);
         static if (LOG)
         {
             printf("\tlibbuf->moffset = x%x\n", libbuf.offset);
@@ -543,7 +529,7 @@ struct MachObjModule
     uint length; // in bytes
     uint offset; // offset from start of library
     char* name; // module name (file name)
-    long file_time; // file time
+    c_long file_time; // file time
     uint user_id;
     uint group_id;
     uint file_mode;

@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -7,6 +7,8 @@
 // http://www.boost.org/LICENSE_1_0.txt
 
 module ddmd.init;
+
+import core.stdc.stdio;
 
 import ddmd.aggregate;
 import ddmd.arraytypes;
@@ -39,12 +41,12 @@ enum NeedInterpret : int
 alias INITnointerpret = NeedInterpret.INITnointerpret;
 alias INITinterpret = NeedInterpret.INITinterpret;
 
+/***********************************************************
+ */
 extern (C++) class Initializer : RootObject
 {
-public:
     Loc loc;
 
-    /********************************** Initializer *******************************/
     final extern (D) this(Loc loc)
     {
         this.loc = loc;
@@ -52,7 +54,7 @@ public:
 
     abstract Initializer syntaxCopy();
 
-    final static Initializers* arraySyntaxCopy(Initializers* ai)
+    static Initializers* arraySyntaxCopy(Initializers* ai)
     {
         Initializers* a = null;
         if (ai)
@@ -75,7 +77,7 @@ public:
 
     abstract Expression toExpression(Type t = null);
 
-    final char* toChars()
+    override final const(char)* toChars()
     {
         OutBuffer buf;
         HdrGenState hgs;
@@ -114,106 +116,105 @@ public:
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class VoidInitializer : Initializer
 {
-public:
-    Type type; // type that this will initialize to
+    Type type;      // type that this will initialize to
 
-    /********************************** VoidInitializer ***************************/
     extern (D) this(Loc loc)
     {
         super(loc);
-        type = null;
     }
 
-    Initializer syntaxCopy()
+    override Initializer syntaxCopy()
     {
         return new VoidInitializer(loc);
     }
 
-    Initializer inferType(Scope* sc)
+    override Initializer inferType(Scope* sc)
     {
         error(loc, "cannot infer type from void initializer");
         return new ErrorInitializer();
     }
 
-    Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
+    override Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
     {
         //printf("VoidInitializer::semantic(t = %p)\n", t);
         type = t;
         return this;
     }
 
-    Expression toExpression(Type t = null)
+    override Expression toExpression(Type t = null)
     {
         return null;
     }
 
-    VoidInitializer isVoidInitializer()
+    override VoidInitializer isVoidInitializer()
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class ErrorInitializer : Initializer
 {
-public:
-    /********************************** ErrorInitializer ***************************/
     extern (D) this()
     {
         super(Loc());
     }
 
-    Initializer syntaxCopy()
+    override Initializer syntaxCopy()
     {
         return this;
     }
 
-    Initializer inferType(Scope* sc)
+    override Initializer inferType(Scope* sc)
     {
         return this;
     }
 
-    Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
+    override Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
     {
         //printf("ErrorInitializer::semantic(t = %p)\n", t);
         return this;
     }
 
-    Expression toExpression(Type t = null)
+    override Expression toExpression(Type t = null)
     {
         return new ErrorExp();
     }
 
-    ErrorInitializer isErrorInitializer()
+    override ErrorInitializer isErrorInitializer()
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class StructInitializer : Initializer
 {
-public:
-    Identifiers field; // of Identifier *'s
-    Initializers value; // parallel array of Initializer *'s
+    Identifiers field;      // of Identifier *'s
+    Initializers value;     // parallel array of Initializer *'s
 
-    /********************************** StructInitializer *************************/
     extern (D) this(Loc loc)
     {
         super(loc);
     }
 
-    Initializer syntaxCopy()
+    override Initializer syntaxCopy()
     {
         auto ai = new StructInitializer(loc);
         assert(field.dim == value.dim);
@@ -234,13 +235,13 @@ public:
         this.value.push(value);
     }
 
-    Initializer inferType(Scope* sc)
+    override Initializer inferType(Scope* sc)
     {
         error(loc, "cannot infer type from struct initializer");
         return new ErrorInitializer();
     }
 
-    Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
+    override Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
     {
         //printf("StructInitializer::semantic(t = %s) %s\n", t->toChars(), toChars());
         t = t.toBasetype();
@@ -308,8 +309,7 @@ public:
                 for (size_t j = 0; j < nfields; j++)
                 {
                     VarDeclaration v2 = sd.fields[j];
-                    bool overlap = (vd.offset < v2.offset + v2.type.size() && v2.offset < vd.offset + vd.type.size());
-                    if (overlap && (*elements)[j])
+                    if (vd.isOverlappedWith(v2) && (*elements)[j])
                     {
                         error(loc, "overlapping initialization for field %s and %s", v2.toChars(), vd.toChars());
                         errors = true;
@@ -361,42 +361,39 @@ public:
      * a struct literal. In the future, the two should be the
      * same thing.
      */
-    Expression toExpression(Type t = null)
+    override Expression toExpression(Type t = null)
     {
         // cannot convert to an expression without target 'ad'
         return null;
     }
 
-    StructInitializer isStructInitializer()
+    override StructInitializer isStructInitializer()
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class ArrayInitializer : Initializer
 {
-public:
-    Expressions index; // indices
-    Initializers value; // of Initializer *'s
-    size_t dim; // length of array being initialized
-    Type type; // type that array will be used to initialize
-    bool sem; // true if semantic() is run
+    Expressions index;      // indices
+    Initializers value;     // of Initializer *'s
+    size_t dim;             // length of array being initialized
+    Type type;              // type that array will be used to initialize
+    bool sem;               // true if semantic() is run
 
-    /********************************** ArrayInitializer ************************************/
     extern (D) this(Loc loc)
     {
         super(loc);
-        dim = 0;
-        type = null;
-        sem = false;
     }
 
-    Initializer syntaxCopy()
+    override Initializer syntaxCopy()
     {
         //printf("ArrayInitializer::syntaxCopy()\n");
         auto ai = new ArrayInitializer(loc);
@@ -429,7 +426,7 @@ public:
         return false;
     }
 
-    Initializer inferType(Scope* sc)
+    override Initializer inferType(Scope* sc)
     {
         //printf("ArrayInitializer::inferType() %s\n", toChars());
         Expressions* keys = null;
@@ -494,12 +491,12 @@ public:
         return new ErrorInitializer();
     }
 
-    Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
+    override Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
     {
         size_t length;
         const(uint) amax = 0x80000000;
         bool errors = false;
-        //printf("ArrayInitializer::semantic(%s)\n", t->toChars());
+        //printf("ArrayInitializer::semantic(%s)\n", t.toChars());
         if (sem) // if semantic() already run
             return this;
         sem = true;
@@ -513,8 +510,7 @@ public:
             t = (cast(TypeVector)t).basetype;
             break;
         case Taarray:
-        case Tstruct:
-            // consider implicit constructor call
+        case Tstruct: // consider implicit constructor call
             {
                 Expression e;
                 // note: MyStruct foo = [1:2, 3:4] is correct code if MyStruct has a this(int[int])
@@ -533,6 +529,7 @@ public:
         case Tpointer:
             if (t.nextOf().ty != Tfunction)
                 break;
+            goto default;
         default:
             error(loc, "cannot use array to initialize %s", t.toChars());
             goto Lerr;
@@ -614,10 +611,10 @@ public:
      * If possible, convert array initializer to array literal.
      * Otherwise return NULL.
      */
-    Expression toExpression(Type tx = null)
+    override Expression toExpression(Type tx = null)
     {
         //printf("ArrayInitializer::toExpression(), dim = %d\n", dim);
-        //static int i; if (++i == 2) halt();
+        //static int i; if (++i == 2) assert(0);
         Expressions* elements;
         size_t edim;
         Type t = null;
@@ -677,9 +674,9 @@ public:
             }
             (*elements)[j] = ex;
         }
-        /* Fill in any missing elements with the default initializer
-         */
         {
+            /* Fill in any missing elements with the default initializer
+             */
             Expression _init = null;
             for (size_t i = 0; i < edim; i++)
             {
@@ -692,12 +689,41 @@ public:
                     (*elements)[i] = _init;
                 }
             }
+
+            /* Expand any static array initializers that are a single expression
+             * into an array of them
+             */
+            if (t)
+            {
+                Type tn = t.nextOf().toBasetype();
+                if (tn.ty == Tsarray)
+                {
+                    const dim = cast(size_t)(cast(TypeSArray)tn).dim.toInteger();
+                    Type te = tn.nextOf().toBasetype();
+                    foreach (ref e; *elements)
+                    {
+                        if (te.equals(e.type))
+                        {
+                            auto elements2 = new Expressions();
+                            elements2.setDim(dim);
+                            foreach (ref e2; *elements2)
+                                e2 = e;
+                            e = new ArrayLiteralExp(e.loc, elements2);
+                            e.type = tn;
+                        }
+                    }
+                }
+            }
+
+            /* If any elements are errors, then the whole thing is an error
+             */
             for (size_t i = 0; i < edim; i++)
             {
                 Expression e = (*elements)[i];
                 if (e.op == TOKerror)
                     return e;
             }
+
             Expression e = new ArrayLiteralExp(loc, elements);
             e.type = type;
             return e;
@@ -713,7 +739,7 @@ public:
     {
         Expression e;
         //printf("ArrayInitializer::toAssocArrayInitializer()\n");
-        //static int i; if (++i == 2) halt();
+        //static int i; if (++i == 2) assert(0);
         auto keys = new Expressions();
         keys.setDim(value.dim);
         auto values = new Expressions();
@@ -739,42 +765,41 @@ public:
         return new ErrorExp();
     }
 
-    ArrayInitializer isArrayInitializer()
+    override ArrayInitializer isArrayInitializer()
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class ExpInitializer : Initializer
 {
-public:
     Expression exp;
     bool expandTuples;
 
-    /********************************** ExpInitializer ************************************/
     extern (D) this(Loc loc, Expression exp)
     {
         super(loc);
         this.exp = exp;
-        this.expandTuples = false;
     }
 
-    Initializer syntaxCopy()
+    override Initializer syntaxCopy()
     {
         return new ExpInitializer(loc, exp.syntaxCopy());
     }
 
-    Initializer inferType(Scope* sc)
+    override Initializer inferType(Scope* sc)
     {
         //printf("ExpInitializer::inferType() %s\n", toChars());
         exp = exp.semantic(sc);
         exp = resolveProperties(sc, exp);
-        if (exp.op == TOKimport)
+        if (exp.op == TOKscope)
         {
             ScopeExp se = cast(ScopeExp)exp;
             TemplateInstance ti = se.sds.isTemplateInstance();
@@ -784,20 +809,14 @@ public:
                 se.error("cannot infer type from %s %s", se.sds.kind(), se.toChars());
             return new ErrorInitializer();
         }
+
         // Give error for overloaded function addresses
-        if (exp.op == TOKsymoff)
+        bool hasOverloads;
+        if (auto f = isFuncAddress(exp, &hasOverloads))
         {
-            SymOffExp se = cast(SymOffExp)exp;
-            if (se.hasOverloads && !se.var.isFuncDeclaration().isUnique())
-            {
-                exp.error("cannot infer type from overloaded function symbol %s", exp.toChars());
+            if (f.checkForwardRef(loc))
                 return new ErrorInitializer();
-            }
-        }
-        if (exp.op == TOKdelegate)
-        {
-            DelegateExp se = cast(DelegateExp)exp;
-            if (se.hasOverloads && se.func.isFuncDeclaration() && !se.func.isFuncDeclaration().isUnique())
+            if (hasOverloads && !f.isUnique())
             {
                 exp.error("cannot infer type from overloaded function symbol %s", exp.toChars());
                 return new ErrorInitializer();
@@ -819,7 +838,7 @@ public:
         return this;
     }
 
-    Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
+    override Initializer semantic(Scope* sc, Type t, NeedInterpret needInterpret)
     {
         //printf("ExpInitializer::semantic(%s), type = %s\n", exp->toChars(), t->toChars());
         if (needInterpret)
@@ -880,7 +899,10 @@ public:
             StringExp se = cast(StringExp)exp;
             Type typeb = se.type.toBasetype();
             TY tynto = tb.nextOf().ty;
-            if (!se.committed && (typeb.ty == Tarray || typeb.ty == Tsarray) && (tynto == Tchar || tynto == Twchar || tynto == Tdchar) && se.length(cast(int)tb.nextOf().size()) < (cast(TypeSArray)tb).dim.toInteger())
+            if (!se.committed &&
+                (typeb.ty == Tarray || typeb.ty == Tsarray) &&
+                (tynto == Tchar || tynto == Twchar || tynto == Tdchar) &&
+                se.numberOfCodeUnits(tynto) < (cast(TypeSArray)tb).dim.toInteger())
             {
                 exp = se.castTo(sc, t);
                 goto L1;
@@ -955,7 +977,7 @@ public:
         return this;
     }
 
-    Expression toExpression(Type t = null)
+    override Expression toExpression(Type t = null)
     {
         if (t)
         {
@@ -978,12 +1000,12 @@ public:
         return exp;
     }
 
-    ExpInitializer isExpInitializer()
+    override ExpInitializer isExpInitializer()
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }

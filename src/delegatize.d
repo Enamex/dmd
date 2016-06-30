@@ -1,16 +1,20 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the
+ * $(LINK2 http://www.dlang.org, D programming language).
+ *
+ * Copyright:   Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
+ * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:      $(DMDSRC _delegatize.d)
+ */
 
 module ddmd.delegatize;
 
+import core.stdc.stdio;
 import ddmd.apply;
 import ddmd.declaration;
 import ddmd.dscope;
+import ddmd.dsymbol;
 import ddmd.expression;
 import ddmd.func;
 import ddmd.globals;
@@ -61,16 +65,16 @@ extern (C++) void lambdaSetParent(Expression e, Scope* sc)
             this.sc = sc;
         }
 
-        void visit(Expression)
+        override void visit(Expression)
         {
         }
 
-        void visit(DeclarationExp e)
+        override void visit(DeclarationExp e)
         {
             e.declaration.parent = sc.parent;
         }
 
-        void visit(IndexExp e)
+        override void visit(IndexExp e)
         {
             if (e.lengthVar)
             {
@@ -79,7 +83,7 @@ extern (C++) void lambdaSetParent(Expression e, Scope* sc)
             }
         }
 
-        void visit(SliceExp e)
+        override void visit(SliceExp e)
         {
             if (e.lengthVar)
             {
@@ -109,35 +113,33 @@ extern (C++) bool lambdaCheckForNestedRef(Expression e, Scope* sc)
         extern (D) this(Scope* sc)
         {
             this.sc = sc;
-            this.result = false;
         }
 
-        void visit(Expression)
+        override void visit(Expression)
         {
         }
 
-        void visit(SymOffExp e)
-        {
-            VarDeclaration v = e.var.isVarDeclaration();
-            if (v)
-                result = v.checkNestedReference(sc, Loc());
-        }
-
-        void visit(VarExp e)
+        override void visit(SymOffExp e)
         {
             VarDeclaration v = e.var.isVarDeclaration();
             if (v)
                 result = v.checkNestedReference(sc, Loc());
         }
 
-        void visit(ThisExp e)
+        override void visit(VarExp e)
         {
             VarDeclaration v = e.var.isVarDeclaration();
             if (v)
                 result = v.checkNestedReference(sc, Loc());
         }
 
-        void visit(DeclarationExp e)
+        override void visit(ThisExp e)
+        {
+            if (e.var)
+                result = e.var.checkNestedReference(sc, Loc());
+        }
+
+        override void visit(DeclarationExp e)
         {
             VarDeclaration v = e.declaration.isVarDeclaration();
             if (v)
@@ -166,4 +168,30 @@ extern (C++) bool lambdaCheckForNestedRef(Expression e, Scope* sc)
     scope LambdaCheckForNestedRef v = new LambdaCheckForNestedRef(sc);
     walkPostorder(e, v);
     return v.result;
+}
+
+bool checkNestedRef(Dsymbol s, Dsymbol p)
+{
+    while (s)
+    {
+        if (s == p) // hit!
+            return false;
+
+        if (auto fd = s.isFuncDeclaration())
+        {
+            if (!fd.isThis() && !fd.isNested())
+                break;
+
+            // Bugzilla 15332: change to delegate if fd is actually nested.
+            if (auto fld = fd.isFuncLiteralDeclaration())
+                fld.tok = TOKdelegate;
+        }
+        if (auto ad = s.isAggregateDeclaration())
+        {
+            if (ad.storage_class & STCstatic)
+                break;
+        }
+        s = s.toParent2();
+    }
+    return true;
 }

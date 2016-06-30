@@ -1,25 +1,36 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the D programming language
+ * http://dlang.org
+ *
+ * Copyright: Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:   Walter Bright, http://www.digitalmars.com
+ * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:    $(DMDSRC root/_file.d)
+ */
 
 module ddmd.root.file;
 
-import core.stdc.errno, core.stdc.stdio, core.stdc.stdlib, core.stdc.string, core.sys.posix.fcntl, core.sys.posix.sys.types, core.sys.posix.unistd, core.sys.posix.utime, core.sys.windows.windows;
-import ddmd.root.array, ddmd.root.filename, ddmd.root.rmem;
+import core.stdc.errno;
+import core.stdc.stdio;
+import core.stdc.stdlib;
+import core.sys.posix.fcntl;
+import core.sys.posix.unistd;
+import core.sys.windows.windows;
+import ddmd.root.filename;
+import ddmd.root.rmem;
 
 version (Windows) alias WIN32_FIND_DATAA = WIN32_FIND_DATA;
 
+/***********************************************************
+ */
 struct File
 {
     int _ref; // != 0 if this is a reference to someone else's buffer
     ubyte* buffer; // data for our file
     size_t len; // amount of data in buffer[]
-    FileName* name; // name of our file
+    const(FileName)* name; // name of our file
 
+nothrow:
     extern (D) this(const(char)* n)
     {
         _ref = 0;
@@ -33,13 +44,12 @@ struct File
         return new File(n);
     }
 
-    /****************************** File ********************************/
     extern (D) this(const(FileName)* n)
     {
         _ref = 0;
         buffer = null;
         len = 0;
-        name = cast(FileName*)n;
+        name = n;
     }
 
     extern (C++) ~this()
@@ -56,7 +66,7 @@ struct File
         }
     }
 
-    extern (C++) char* toChars()
+    extern (C++) const(char)* toChars() pure
     {
         return name.toChars();
     }
@@ -72,7 +82,7 @@ struct File
             size_t size;
             stat_t buf;
             ssize_t numread;
-            char* name = this.name.toChars();
+            const(char)* name = this.name.toChars();
             //printf("File::read('%s')\n",name);
             int fd = open(name, O_RDONLY);
             if (fd == -1)
@@ -125,7 +135,7 @@ struct File
         {
             DWORD size;
             DWORD numread;
-            char* name = this.name.toChars();
+            const(char)* name = this.name.toChars();
             HANDLE h = CreateFileA(name, GENERIC_READ, FILE_SHARE_READ, null, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, null);
             if (h == INVALID_HANDLE_VALUE)
                 goto err1;
@@ -172,7 +182,7 @@ struct File
         version (Posix)
         {
             ssize_t numwritten;
-            char* name = this.name.toChars();
+            const(char)* name = this.name.toChars();
             int fd = open(name, O_CREAT | O_WRONLY | O_TRUNC, (6 << 6) | (4 << 3) | 4);
             if (fd == -1)
                 goto err;
@@ -191,7 +201,7 @@ struct File
         else version (Windows)
         {
             DWORD numwritten;
-            char* name = this.name.toChars();
+            const(char)* name = this.name.toChars();
             HANDLE h = CreateFileA(name, GENERIC_WRITE, 0, null, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, null);
             if (h == INVALID_HANDLE_VALUE)
                 goto err;

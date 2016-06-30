@@ -1,6 +1,6 @@
 INSTALL_DIR=$(PWD)/../install
-ECTAGS_LANGS = Make,C,C++,Sh
-ECTAGS_FILES = src/*.[ch] src/backend/*.[ch] src/root/*.[ch] src/tk/*.[ch]
+ECTAGS_LANGS = Make,C,C++,D,Sh
+ECTAGS_FILES = src/*.[chd] src/backend/*.[chd] src/root/*.[chd] src/tk/*.[chd]
 
 .PHONY: all clean test install auto-tester-build auto-tester-test
 
@@ -19,6 +19,9 @@ clean:
 
 test:
 	$(QUIET)$(MAKE) -C test -f Makefile
+
+html:
+	$(QUIET)$(MAKE) -C src -f posix.mak html
 
 # Creates Exuberant Ctags tags file
 tags: posix.mak $(ECTAGS_FILES)

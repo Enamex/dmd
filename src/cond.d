@@ -1,44 +1,45 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the
+ * $(LINK2 http://www.dlang.org, D programming language).
+ *
+ * Copyright:   Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
+ * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:      $(DMDSRC _cond.d)
+ */
 
 module ddmd.cond;
 
 import core.stdc.string;
 import ddmd.arraytypes;
 import ddmd.dmodule;
-import ddmd.dmodule;
 import ddmd.dscope;
 import ddmd.dsymbol;
 import ddmd.errors;
 import ddmd.expression;
 import ddmd.globals;
-import ddmd.hdrgen;
 import ddmd.identifier;
-import ddmd.mars;
 import ddmd.mtype;
 import ddmd.root.outbuffer;
 import ddmd.tokens;
+import ddmd.utils;
 import ddmd.visitor;
+import ddmd.id;
 
-extern (C++) class Condition
+
+/***********************************************************
+ */
+extern (C++) abstract class Condition
 {
-public:
     Loc loc;
     // 0: not computed yet
     // 1: include
     // 2: do not include
     int inc;
 
-    /* ============================================================ */
     final extern (D) this(Loc loc)
     {
         this.loc = loc;
-        inc = 0;
     }
 
     abstract Condition syntaxCopy();
@@ -56,14 +57,14 @@ public:
     }
 }
 
+/***********************************************************
+ */
 extern (C++) class DVCondition : Condition
 {
-public:
     uint level;
     Identifier ident;
     Module mod;
 
-    /* ============================================================ */
     final extern (D) this(Module mod, uint level, Identifier ident)
     {
         super(Loc());
@@ -72,21 +73,21 @@ public:
         this.ident = ident;
     }
 
-    final Condition syntaxCopy()
+    override final Condition syntaxCopy()
     {
         return this; // don't need to copy
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class DebugCondition : DVCondition
 {
-public:
-    /* ============================================================ */
     static void setGlobalLevel(uint level)
     {
         global.params.debuglevel = level;
@@ -104,7 +105,7 @@ public:
         super(mod, level, ident);
     }
 
-    int include(Scope* sc, ScopeDsymbol sds)
+    override int include(Scope* sc, ScopeDsymbol sds)
     {
         //printf("DebugCondition::include() level = %d, debuglevel = %d\n", level, global.params.debuglevel);
         if (inc == 0)
@@ -135,21 +136,21 @@ public:
         return (inc == 1);
     }
 
-    DebugCondition isDebugCondition()
+    override DebugCondition isDebugCondition()
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class VersionCondition : DVCondition
 {
-public:
-    /* ============================================================ */
     static void setGlobalLevel(uint level)
     {
         global.params.versionlevel = level;
@@ -168,6 +169,9 @@ public:
             "Win64",
             "linux",
             "OSX",
+            "iOS",
+            "TVOS",
+            "WatchOS",
             "FreeBSD",
             "OpenBSD",
             "NetBSD",
@@ -182,6 +186,8 @@ public:
             "SysV4",
             "Hurd",
             "Android",
+            "PlayStation",
+            "PlayStation4",
             "Cygwin",
             "MinGW",
             "FreeStanding",
@@ -217,6 +223,7 @@ public:
             "SPARC64",
             "S390",
             "S390X",
+            "SystemZ",
             "HPPA",
             "HPPA64",
             "SH",
@@ -228,7 +235,8 @@ public:
             "BigEndian",
             "ELFv1",
             "ELFv2",
-            "CRuntime_Digitalmars",
+            "CRuntime_Bionic",
+            "CRuntime_DigitalMars",
             "CRuntime_Glibc",
             "CRuntime_Microsoft",
             "D_Coverage",
@@ -283,7 +291,7 @@ public:
         super(mod, level, ident);
     }
 
-    int include(Scope* sc, ScopeDsymbol sds)
+    override int include(Scope* sc, ScopeDsymbol sds)
     {
         //printf("VersionCondition::include() level = %d, versionlevel = %d\n", level, global.params.versionlevel);
         //if (ident) printf("\tident = '%s'\n", ident->toChars());
@@ -309,38 +317,40 @@ public:
             }
             else if (level <= global.params.versionlevel || level <= mod.versionlevel)
                 inc = 1;
-            if (!definedInModule && (!ident || (!isPredefined(ident.toChars()) && ident != Identifier.idPool(Token.toChars(TOKunittest)) && ident != Identifier.idPool(Token.toChars(TOKassert)))))
+            if (!definedInModule &&
+                (!ident || (!isPredefined(ident.toChars()) && ident != Id._unittest && ident != Id._assert)))
+            {
                 printDepsConditional(sc, this, "depsVersion ");
+            }
         }
         return (inc == 1);
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }
 }
 
+/***********************************************************
+ */
 extern (C++) final class StaticIfCondition : Condition
 {
-public:
     Expression exp;
-    int nest; // limit circular dependencies
+    int nest;           // limit circular dependencies
 
-    /**************************** StaticIfCondition *******************************/
     extern (D) this(Loc loc, Expression exp)
     {
         super(loc);
         this.exp = exp;
-        this.nest = 0;
     }
 
-    Condition syntaxCopy()
+    override Condition syntaxCopy()
     {
         return new StaticIfCondition(loc, exp.syntaxCopy());
     }
 
-    int include(Scope* sc, ScopeDsymbol sds)
+    override int include(Scope* sc, ScopeDsymbol sds)
     {
         version (none)
         {
@@ -406,7 +416,7 @@ public:
         return 0;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }

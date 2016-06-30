@@ -1,46 +1,138 @@
 Ddoc
 
-$(COMMENT Pending changelog for 2.069. This will get copied to dlang.org and
-    cleared when master gets merged into stable prior to 2.069.
+$(COMMENT Pending changelog for 2.072. This will get copied to dlang.org and
+    cleared when master gets merged into stable.
+)
+
+$(BUGSTITLE Language Changes,
+    $(LI $(RELATIVE_LINK2 deprecated_commaexp, Using the result of a comma expression is deprecated.))
+
+    $(LI $(LNAME2 unrestricted_unions, Add Unrestricted Unions.)
+
+        $(P
+             Unrestricted unions may have postblits, destructors, and invariants.
+             It is up to the programmer to call them appropriately.
+        )
+    )
+
+    $(LI $(RELATIVE_LINK2 align_by_ctfe, Align attribute can be used with CTFEable expression.))
 )
 
 $(BUGSTITLE Compiler Changes,
-$(LI $(RELATIVE_LINK2 objective-c-support, Basic support for Objective-C.))
-$(LI $(RELATIVE_LINK2 property-switch-deprecated, The $(TT -property) switch has
-    been deprecated.))
+    $(LI $(RELATIVE_LINK2 deferred_alias, Analysis for aliases in imported modules is deferred.))
+    $(LI $(RELATIVE_LINK2 native_tls_osx, Native TLS on OS X 64 bit.))
+)
+
+$(BUGSTITLE Language Changes,
+    $(LI $(LNAME2 deprecated_commaexp, Using the result of a comma expression is deprecated.)
+
+    $(P Comma expressions expressions have proven to be a frequent source of confusion, and bug.
+        Using their result will now trigger a deprecation message.)
+
+    $(P Example:)
+
+        ---
+        module comma;
+
+        void main () {
+          size_t aggr;
+          MyContainerClass mc;
+          auto r1 = getRange!int, r2 = getRange!int;
+          // This is okay
+          for (; !r1.empty && r2.empty; r1.popFront, r2.popFront)
+            aggr += compute(r1.front, r2.front);
+          // This is not, as only the 3rd part (increment) allows commas
+          for (; !r1.empty, r2.empty; r1.popFront, r2.popFront)
+            aggr += compute(r1.front, r2.front);
+          // This is okay, the result is not used.
+          if (!mc)
+            mc = new MyContainerClass, mc.append(new Entry);
+          // But this is not
+          if (!mc)
+            mc = (aggr++, new MyContainerClass);
+        }
+        ---
+    )
+    $(LI $(LNAME2 align_by_ctfe, Align attribute can be used with CTFEable expression.)
+
+    $(P Example:)
+
+        ---
+        version (D_LP64)
+            enum n = 8;
+        else
+            enum n = 4;
+        align (n) struct Data
+        {
+        align (n == 8 ? 2 : 1):
+            ubyte[3] buffer;
+            int flags;
+        }
+
+        version (D_LP64)
+            static assert(Data.flags.offsetof == 4);
+        else
+            static assert(Data.flags.offsetof == 3);
+        ---
+    )
 )
 
 $(BUGSTITLE Compiler Changes,
+    $(LI $(LNAME2 deferred_alias, Analysis for aliases in imported modules is deferred.)
 
-$(LI $(LNAME2 objective-c-support, Basic support for Objective-C.)
+    $(P Example:)
 
-    $(P Basic support for Objective-C classes, interfaces and instance methods.
-        This is implemented by adding a new linkage attribute, Objective-C, and
-        a compiler recognized UDA, @selector. The linkage attribute is to be
-        used on a class or interface. The UDA is attached to a method.
+        ---
+        module lib;
+        template ExpensiveApiImpl(int ver)
+        {
+            ...
+            void func() {}
+            pragma(msg, "instantiated ExpensiveApiImpl ", ver);
+        }
+        alias api1 = ExpensiveApiImpl!(1);
+        alias api2 = ExpensiveApiImpl!(2);
+        ---
+
+        ---
+        import lib;
+        void main()
+        {
+            // OK, prints "instantiated ExpensiveApiImpl 1"
+            api1.func();
+
+            // Don't print "instantiated ExpensiveApiImpl 2", because
+            // the alias name 'api2' is not used.
+        }
+        ---
     )
-)
 
-$(LI $(LNAME2 property-switch-deprecated, The $(TT -property) switch has
-    been deprecated.)
+    $(LI
+        $(LNAME2 native_tls_osx, Native TLS on OS X 64 bit.)
 
-    $(P The $(TT -property) switch used to disallow calling non-properties
-        without parentheses. The switch has not been used to build Phobos for
-        some time now. So naturally, code that's incompatible with
-        $(TT -property) has found its way in. This means, the switch has
-        effectively not been supported by D at large.
+        $(P
+            The compiler has been updated to use native thread local storage
+            (TLS) on OS X when compiling for 64 bit. This means that it's
+            possible to to link with C/C++ TLS variables. This change is an ABI
+            breaking change and requires recompiling libraries.
+        )
+
+        $(P
+            The minimum required version of running the compiler and any
+            produced binary is now Mac OS X Lion (10.7).
+        )
+
+        $(P
+            Xcode 7.3 has a bug causing linker errors for some TLS variables.
+            Xcode 7.3.1 fixes this bug. Any version older than 7.3 works as well.
+        )
     )
-
-    $(P Since the behaviour of the $(TT -property) switch was not well-liked,
-        it's been deprecated and made to have no effect when used.
-    )
-)
-
 )
 
 Macros:
     TITLE=Change Log
 
+    H4 = <h4>$0</h4>
     BUGSTITLE = <div class="bugsfixed">$(H4 $1) $(OL $2 )</div>
 
     RELATIVE_LINK2=<a href="#$1">$+</a>
@@ -49,3 +141,9 @@ Macros:
     STDMODREF = <a href="phobos/std_$1.html">$2</a>
     XREF = <a href="phobos/std_$1.html#$2">$2</a>
     CXREF = <a href="phobos/core_$1.html#$2">$2</a>
+
+    BUGZILLA = <a href="https://issues.dlang.org/show_bug.cgi?id=$0">Bugzilla $0</a>
+    PULL_REQUEST = $(LINK2 https://github.com/dlang/$1/pull/$2, $1#$2)
+    DMDPR = $(PULL_REQUEST dmd,$1)
+
+    BOOKTABLE = <table><caption>$1</caption>$+</table>

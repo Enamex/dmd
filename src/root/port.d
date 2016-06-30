@@ -1,23 +1,40 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the D programming language
+ * http://dlang.org
+ *
+ * Copyright: Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:   Walter Bright, http://www.digitalmars.com
+ * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:    $(DMDSRC root/_port.d)
+ */
 
 module ddmd.root.port;
 
 import core.stdc.ctype;
 import core.stdc.string;
+import core.stdc.stdio;
 import core.math;
 
 version(CRuntime_DigitalMars) __gshared extern (C) extern const(char)* __locale_decpoint;
-version(CRuntime_Microsoft)   extern(C++) struct longdouble {}
+version(CRuntime_Microsoft)   extern(C++) struct longdouble { real r; }
+version(CRuntime_Microsoft)   extern(C++) size_t ld_sprint(char* str, int fmt, longdouble x);
 
 extern (C) float strtof(const(char)* p, char** endp);
 extern (C) double strtod(const(char)* p, char** endp);
-extern (C) real strtold(const(char)* p, char** endp);
+
+version(CRuntime_Microsoft)
+    extern (C++) longdouble strtold_dm(const(char)* p, char** endp);
+else
+    extern (C) real strtold(const(char)* p, char** endp);
+
+version(CRuntime_Microsoft)
+{
+    enum _OVERFLOW = 3;   /* overflow range error */
+    enum _UNDERFLOW = 4;   /* underflow range error */
+
+    extern (C) int _atoflt(float* value, const char * str);
+    extern (C) int _atodbl(double* value, const char * str);
+}
 
 extern (C++) struct Port
 {
@@ -37,20 +54,6 @@ extern (C++) struct Port
         static __gshared bool yl2xp1_supported = false;
     }
     static __gshared real snan;
-    static this()
-    {
-        /*
-         * Use a payload which is different from the machine NaN,
-         * so that uninitialised variables can be
-         * detected even if exceptions are disabled.
-         */
-        ushort* us = cast(ushort*)&snan;
-        us[0] = 0;
-        us[1] = 0;
-        us[2] = 0;
-        us[3] = 0xA000;
-        us[4] = 0x7FFF;
-    }
 
     static bool isNan(double r)
     {
@@ -67,9 +70,11 @@ extern (C++) struct Port
         return a % b;
     }
 
-    static real fequal(real a, real b)
+    static bool fequal(real a, real b)
     {
-        return memcmp(&a, &b, 10) == 0;
+        // don't compare pad bytes in extended precision
+        enum sz = (real.mant_dig == 64) ? 10 : real.sizeof;
+        return memcmp(&a, &b, sz) == 0;
     }
 
     static int memicmp(const char* s1, const char* s2, size_t n)
@@ -135,7 +140,25 @@ extern (C++) struct Port
             auto save = __locale_decpoint;
             __locale_decpoint = ".";
         }
-        auto r = .strtof(p, endp);
+        version (CRuntime_Microsoft)
+        {
+            import core.stdc.errno;
+            float r;
+            if(endp)
+            {
+                r = .strtod(p, endp); // does not set errno for underflows, but unused
+            }
+            else
+            {
+                int res = _atoflt(&r, p);
+                if (res == _UNDERFLOW || res == _OVERFLOW)
+                    errno = ERANGE;
+            }
+        }
+        else
+        {
+            auto r = .strtof(p, endp);
+        }
         version (CRuntime_DigitalMars) __locale_decpoint = save;
         return r;
     }
@@ -147,7 +170,25 @@ extern (C++) struct Port
             auto save = __locale_decpoint;
             __locale_decpoint = ".";
         }
-        auto r = .strtod(p, endp);
+        version (CRuntime_Microsoft)
+        {
+            import core.stdc.errno;
+            double r;
+            if(endp)
+            {
+                r = .strtod(p, endp); // does not set errno for underflows, but unused
+            }
+            else
+            {
+                int res = _atodbl(&r, p);
+                if (res == _UNDERFLOW || res == _OVERFLOW)
+                    errno = ERANGE;
+            }
+        }
+        else
+        {
+            auto r = .strtod(p, endp);
+        }
         version (CRuntime_DigitalMars) __locale_decpoint = save;
         return r;
     }
@@ -159,9 +200,39 @@ extern (C++) struct Port
             auto save = __locale_decpoint;
             __locale_decpoint = ".";
         }
-        auto r = .strtold(p, endp);
+
+        version (CRuntime_Microsoft)
+            auto r = .strtold_dm(p, endp).r;
+        else
+            auto r = .strtold(p, endp);
         version (CRuntime_DigitalMars) __locale_decpoint = save;
         return r;
+    }
+
+    static size_t ld_sprint(char* str, int fmt, real x)
+    {
+        version(CRuntime_Microsoft)
+        {
+            return .ld_sprint(str, fmt, longdouble(x));
+        }
+        else
+        {
+            if ((cast(real)cast(ulong)x) == x)
+            {
+                // ((1.5 -> 1 -> 1.0) == 1.5) is false
+                // ((1.0 -> 1 -> 1.0) == 1.0) is true
+                // see http://en.cppreference.com/w/cpp/io/c/fprintf
+                char[5] sfmt = "%#Lg\0";
+                sfmt[3] = cast(char)fmt;
+                return sprintf(str, sfmt.ptr, x);
+            }
+            else
+            {
+                char[4] sfmt = "%Lg\0";
+                sfmt[2] = cast(char)fmt;
+                return sprintf(str, sfmt.ptr, x);
+            }
+        }
     }
 
     static void yl2x_impl(real* x, real* y, real* res)
@@ -222,5 +293,17 @@ extern (C++) struct Port
     {
         auto p = cast(ubyte*)buffer;
         return (p[0] << 8) | p[1];
+    }
+
+    static void valcpy(void *dst, ulong val, size_t size)
+    {
+        switch (size)
+        {
+            case 1: *cast(ubyte *)dst = cast(ubyte)val; break;
+            case 2: *cast(ushort *)dst = cast(ushort)val; break;
+            case 4: *cast(uint *)dst = cast(uint)val; break;
+            case 8: *cast(ulong *)dst = cast(ulong)val; break;
+            default: assert(0);
+        }
     }
 }

@@ -154,11 +154,6 @@ enum LANG
 #define TRUE            1
 #define FALSE           0
 
-#ifndef ARG_TRUE
-#define ARG_TRUE        ,TRUE
-#define ARG_FALSE       ,FALSE
-#endif
-
 #define arraysize(array)        (sizeof(array) / sizeof(array[0]))
 
 #define IDMAX   900 //467 //254 // identifier max (excluding terminating 0)
@@ -427,13 +422,15 @@ typedef struct block
         struct
         {   Symbol *catchtype;          // one type for each catch block
             #define Bcatchtype BS.BIJCATCH.catchtype
+
+            unsigned *actionTable;      // EH_DWARF: indices into typeTable, first is # of entries
         } BIJCATCH;                     // BCjcatch
 #endif
 #if NTEXCEPTIONS || MARS
         struct
         {
 #if MARS
-            Symbol *jcatchvar;          // __j_throw() fills in this
+            Symbol *jcatchvar;          // __d_throw() fills in this
             #define jcatchvar BS.BI_TRY.jcatchvar
 #endif
             int Bscope_index;           // index into scope table
@@ -443,10 +440,16 @@ typedef struct block
         } BI_TRY;                       // BC_try
 #endif
 
+        struct
+        {
+            Symbol *flag;               // EH_DWARF: set to 'flag' symbol that encloses finally
+            block *b_ret;               // EH_DWARF: associated BC_ret block
+        } BI_FINALLY;
+
     } BS;
     Srcpos      Bsrcpos;        // line number (0 if not known)
     unsigned char BC;           // exit condition (enum BC)
-// NEW
+
     unsigned char Balign;       // alignment
 
     unsigned short Bflags;              // flags (BFLxxxx)
@@ -560,6 +563,7 @@ typedef struct block
     void prependSucc(block *b) { list_prepend(&this->Bsucc, b); }
     int numSucc() { return list_nitems(this->Bsucc); }
     block *nthSucc(int n) { return (block *)list_ptr(list_nth(Bsucc, n)); }
+    void setNthSucc(int n, block *b) { list_ptr(list_nth(Bsucc, n)) = b; }
 } block;
 
 #define list_block(l)   ((block *) list_ptr(l))
@@ -592,13 +596,14 @@ enum BC {
     BCcatch     = 11,   // C++ catch block
     BCjump      = 12,   // Belem specifies (near) address to jump to
     BC_try      = 13,   // SEH: first block of try-except or try-finally
-                        // Mars: try-catch or try-finally
+                        // D: try-catch or try-finally
     BC_filter   = 14,   // SEH exception-filter (always exactly one block)
     BC_finally  = 15,   // first block of SEH termination-handler,
-                        // or finally block
-    BC_ret      = 16,   // last block of SEH termination-handler or finally block
+                        // or D finally block
+    BC_ret      = 16,   // last block of SEH termination-handler or D _finally block
     BC_except   = 17,   // first block of SEH exception-handler
-    BCjcatch    = 18,   // first block of Mars catch-block
+    BCjcatch    = 18,   // D catch block
+    BC_lpad     = 19,   // EH_DWARF: landing pad for BC_except
     BCMAX
 };
 
@@ -661,9 +666,7 @@ typedef struct FUNC_S
         #define Fnteh           0x08    // uses NT Structured EH
         #define Fdoinline       0x40    // do inline walk
         #define Foverridden     0x80    // ignore for overriding purposes
-#if MARS && TARGET_WINDOS
         #define Fjmonitor       0x100   // Mars synchronized function
-#endif
         #define Fnosideeff      0x200   // function has no side effects
         #define F3badoparrow    0x400   // bad operator->()
         #define Fmain           0x800   // function is main() or wmain()
@@ -671,6 +674,7 @@ typedef struct FUNC_S
         #define Fmember         0x2000  // D member function with 'this'
         #define Fnotailrecursion 0x4000 // no tail recursion optimizations
         #define Ffakeeh         0x8000  // allocate space for NT EH context sym anyway
+        #define Fnothrow        0x10000 // function does not throw (even if not marked 'nothrow')
     unsigned char Foper;        // operator number (OPxxxx) if Foperator
 
     Symbol *Fparsescope;        // use this scope to parse friend functions
@@ -713,6 +717,18 @@ typedef struct FUNC_S
     Funcsym *Fsurrogatesym;     // Fsurrogate: surrogate cast function
 
     char *Fredirect;            // redirect function name to this name in object
+
+    // Array of catch types for EH_DWARF Types Table generation
+    Symbol **typesTable;
+    size_t typesTableDim;       // number used in typesTable[]
+    size_t typesTableCapacity;  // allocated capacity of typesTable[]
+
+#if ELFOBJ
+    unsigned LSDAoffset;        // offset in LSDA segment of the LSDA data for this function
+#endif
+#if MACHOBJ
+    Symbol *LSDAsym;            // GCC_except_table%d
+#endif
 } func_t;
 
 #define func_calloc()   ((func_t *) mem_fcalloc(sizeof(func_t)))
@@ -1255,6 +1271,8 @@ struct Symbol
     int Sweight;                // usage count, the higher the number,
                                 // the more worthwhile it is to put in
                                 // a register
+    int Sdw_ref_idx;            // !=0 means index of DW.ref.name symbol (Dwarf EH)
+
     union
     {
         unsigned Sxtrnnum_;     // SCcomdef,SCextern,SCcomdat: external symbol # (starting from 1)
@@ -1271,6 +1289,11 @@ struct Symbol
         }_SR;                   // SCregister,SCregpar,SCpseudo: register number
     }_SXR;
     regm_t      Sregsaved;      // mask of registers not affected by this func
+
+#if MARS
+    unsigned lnoscopestart;     // life time of var
+    unsigned lnoscopeend;       // the line after the scope
+#endif
 
     char Sident[1];             // identifier string (dynamic array)
 
@@ -1418,6 +1441,8 @@ enum FL
         // Global Offset Table
         FLgot,          // global offset table entry outside this object file
         FLgotoff,       // global offset table entry inside this object file
+
+        FLfuncarg,      // argument to upcoming function call
 
         FLMAX
 };
@@ -1601,9 +1626,8 @@ enum
     DT_xoff,
     DT_nbytes,
     DT_common,
-    DT_symsize,
     DT_coff,
-    DT_ibytes, // 7
+    DT_ibytes, // 6
 };
 
 // An efficient way to clear aligned memory

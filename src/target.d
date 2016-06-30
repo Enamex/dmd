@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -8,7 +8,6 @@
 
 module ddmd.target;
 
-import core.stdc.string;
 import ddmd.dmodule;
 import ddmd.expression;
 import ddmd.globals;
@@ -17,16 +16,20 @@ import ddmd.mtype;
 import ddmd.root.longdouble;
 import ddmd.root.outbuffer;
 
+/***********************************************************
+ */
 struct Target
 {
     extern (C++) static __gshared int ptrsize;
-    extern (C++) static __gshared int realsize; // size a real consumes in memory
-    extern (C++) static __gshared int realpad; // 'padding' added to the CPU real size to bring it up to realsize
-    extern (C++) static __gshared int realalignsize; // alignment for reals
+    extern (C++) static __gshared int realsize;             // size a real consumes in memory
+    extern (C++) static __gshared int realpad;              // 'padding' added to the CPU real size to bring it up to realsize
+    extern (C++) static __gshared int realalignsize;        // alignment for reals
+    extern (C++) static __gshared bool realislongdouble;    // distinguish between C 'long double' and '__float128'
     extern (C++) static __gshared bool reverseCppOverloads; // with dmc and cl, overloaded functions are grouped and in reverse order
-    extern (C++) static __gshared int c_longsize; // size of a C 'long' or 'unsigned long' type
-    extern (C++) static __gshared int c_long_doublesize; // size of a C 'long double'
-    extern (C++) static __gshared int classinfosize; // size of 'ClassInfo'
+    extern (C++) static __gshared bool cppExceptions;       // set if catching C++ exceptions is supported
+    extern (C++) static __gshared int c_longsize;           // size of a C 'long' or 'unsigned long' type
+    extern (C++) static __gshared int c_long_doublesize;    // size of a C 'long double'
+    extern (C++) static __gshared int classinfosize;        // size of 'ClassInfo'
 
     extern (C++) static void _init()
     {
@@ -77,9 +80,13 @@ struct Target
                 c_longsize = 8;
             }
         }
+        realislongdouble = true;
         c_long_doublesize = realsize;
         if (global.params.is64bit && global.params.isWindows)
             c_long_doublesize = 8;
+
+        cppExceptions = global.params.isLinux || global.params.isFreeBSD ||
+            global.params.isOSX;
     }
 
     /******************************
@@ -162,7 +169,6 @@ struct Target
             return 24;
         }
         assert(0);
-        return 0;
     }
 
     /***********************************
@@ -190,12 +196,16 @@ struct Target
         else
         {
             assert(0);
-            return null;
         }
     }
 
-    /*
-     * Return true if the given type is supported for this target
+    /**
+     * Checks whether the target supports a vector type with total size `sz`
+     * (in bytes) and element type `type`.
+     *
+     * Returns: 0 if the type is supported, or else: 1 if vector types are not
+     *     supported on the target at all, 2 if the given size isn't, or 3 if
+     *     the element type isn't.
      */
     extern (C++) static int checkVectorType(int sz, Type type)
     {
@@ -232,7 +242,6 @@ struct Target
     {
         // We support up to 512-bit values.
         ubyte[64] buffer;
-        memset(buffer.ptr, 0, buffer.sizeof);
         assert(e.type.size() == type.size());
         // Write the expression into the buffer.
         switch (e.type.ty)
@@ -264,7 +273,6 @@ struct Target
         default:
             assert(0);
         }
-        return null; // avoid warning
     }
 
     /******************************

@@ -1644,26 +1644,22 @@ void test99()
 
 void test100()
 {
-  {
-    real r = ulong.max;
-    printf("r = %Lg, ulong.max = %llu\n", r, ulong.max);
-    ulong d = cast(ulong)r;
-    printf("d = %llx, ulong.max = %llx\n", d, ulong.max);
-    assert(d == ulong.max);
-  }
-  static if(real.mant_dig == 64)
-  {
-    real r = ulong.max - 1;
-    printf("r = %Lg, ulong.max = %llu\n", r, ulong.max);
-    ulong d = cast(ulong)r;
-    printf("d = %llx, ulong.max = %llx\n", d, ulong.max);
-    assert(d == ulong.max - 1);
-  }
-  else static if(real.mant_dig == 53)
-  { //can't store ulong.max-1 in double
-  }
-  else
-     static assert(false, "Test not implemented for this platform");
+    static void check(ulong value)
+    {
+        real r = value;
+        ulong d = cast(ulong)r;
+        printf("ulong: %llu => real: %Lg => ulong: %llu\n", value, r, d);
+        assert(d == value);
+    }
+
+    // check biggest power of 2 representable in ulong: 2^63
+    check(1L << 63);
+
+    // check biggest representable uneven number
+    static if (real.mant_dig >= 64) // > 64: limited by ulong precision
+        check(ulong.max); // 2^64-1
+    else
+        check((1L << real.mant_dig) - 1);
 }
 
 /***************************************************/
@@ -5955,8 +5951,46 @@ void test10642()
     test(Date(1999, 1, 1), 1, MonthDay(1,1));
 }
 
+/***************************************************/
+// 11581
+
+alias TT11581(T...) = T;
+
+void test11581()
+{
+    static class A {}
+
+    static class C { alias Types = TT11581!(4, int); }
+    static C makeC() { return null; }
+
+    alias T = TT11581!(A);
+
+    // edim == IntergerExp(0)
+    auto a1 = new T[0];
+    static assert(is(typeof(a1) == A));
+
+    enum d2 = 0;
+
+    // edim == TypeIdentifier('d2') --> IdentifierExp
+    auto a2 = new T[d2];
+    static assert(is(typeof(a2) == A));
+
+    alias U = int;
+    int d3 = 3;
+
+    // edim == TypeIdentifier('d3') --> IdentifierExp
+    auto a3 = new U[d3];
+    static assert(is(typeof(a3) == U[]));
+    assert(a3.length == d3);
+
+    // edim == IndexExp(DotIdExp(CallExp(makeC, []), 'Types'), 0)
+    auto a4 = new U[makeC().Types[0]];
+    static assert(is(typeof(a4) == U[]));
+    assert(a4.length == C.Types[0]);
+}
 
 /***************************************************/
+// 7436
 
 void test7436()
 {
@@ -6011,6 +6045,20 @@ void test14510()
 {
     Vector14510 vec;
     fun14510(vec);
+}
+
+/***************************************************/
+// https://issues.dlang.org/show_bug.cgi?id=16027
+
+void test16027()
+{
+    double value = 1.0;
+    value *= -1.0;
+    assert(value == -1.0);    // fails, value is +1.0
+
+    value = 1.0;
+    value = value * -1.0;
+    assert(value == -1.0);
 }
 
 /***************************************************/
@@ -6305,10 +6353,12 @@ int main()
     test11265();
     test10633();
     test10642();
+    test11581();
     test7436();
     test12138();
     test14430();
     test14510();
+    test16027();
 
     writefln("Success");
     return 0;

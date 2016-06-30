@@ -1,10 +1,12 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the
+ * $(LINK2 http://www.dlang.org, D programming language).
+ *
+ * Copyright:   Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
+ * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:      $(DMDSRC _builtin.d)
+ */
 
 module ddmd.builtin;
 
@@ -21,18 +23,20 @@ import ddmd.root.port;
 import ddmd.root.stringtable;
 import ddmd.tokens;
 
+private:
+
 extern (C++) alias builtin_fp = Expression function(Loc loc, FuncDeclaration fd, Expressions* arguments);
 
-extern (C++) __gshared StringTable builtins;
+__gshared StringTable builtins;
 
-extern (C++) void add_builtin(const(char)* mangle, builtin_fp fp)
+public extern (C++) void add_builtin(const(char)* mangle, builtin_fp fp)
 {
-    builtins.insert(mangle, strlen(mangle)).ptrvalue = cast(void*)fp;
+    builtins.insert(mangle, strlen(mangle), cast(void*)fp);
 }
 
-extern (C++) builtin_fp builtin_lookup(const(char)* mangle)
+builtin_fp builtin_lookup(const(char)* mangle)
 {
-    if (StringValue* sv = builtins.lookup(mangle, strlen(mangle)))
+    if (const sv = builtins.lookup(mangle, strlen(mangle)))
         return cast(builtin_fp)sv.ptrvalue;
     return null;
 }
@@ -168,7 +172,7 @@ extern (C++) Expression eval_yl2xp1(Loc loc, FuncDeclaration fd, Expressions* ar
     return new RealExp(loc, result, arg0.type);
 }
 
-extern (C++) void builtin_init()
+public extern (C++) void builtin_init()
 {
     builtins._init(47);
     // @safe @nogc pure nothrow real function(real)
@@ -272,7 +276,7 @@ extern (C++) void builtin_init()
  * Determine if function is a builtin one that we can
  * evaluate at compile time.
  */
-extern (C++) BUILTIN isBuiltin(FuncDeclaration fd)
+public extern (C++) BUILTIN isBuiltin(FuncDeclaration fd)
 {
     if (fd.builtin == BUILTINunknown)
     {
@@ -286,7 +290,7 @@ extern (C++) BUILTIN isBuiltin(FuncDeclaration fd)
  * Evaluate builtin function.
  * Return result; NULL if cannot evaluate it.
  */
-extern (C++) Expression eval_builtin(Loc loc, FuncDeclaration fd, Expressions* arguments)
+public extern (C++) Expression eval_builtin(Loc loc, FuncDeclaration fd, Expressions* arguments)
 {
     if (fd.builtin == BUILTINyes)
     {

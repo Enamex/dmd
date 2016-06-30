@@ -30,6 +30,8 @@
 #include        "md5.h"
 
 #if MARS
+#include        "varstats.h"
+
 struct Loc
 {
     char *filename;
@@ -265,6 +267,7 @@ struct Objstate
     int segidx;                 // index of next SEGDEF record
     int extidx;                 // index of next EXTDEF record
     int pubnamidx;              // index of COMDAT public name index
+    Outbuffer *reset_symbuf;    // Keep pointers to reset symbols
 
     Symbol *startaddress;       // if !NULL, then Symbol is start address
 
@@ -335,7 +338,6 @@ STATIC void outextdata();
 STATIC void outpubdata();
 STATIC Ledatarec *ledata_new(int seg,targ_size_t offset);
 
-char *id_compress(char *id, int idlen);
 
 /*******************************
  * Output an object file data record.
@@ -590,10 +592,26 @@ Obj *Obj::init(Outbuffer *objbuf, const char *filename, const char *csegname)
         //printf("Obj::init()\n");
         Obj *mobj = new Obj();
 
+        Outbuffer *reset_symbuf = obj.reset_symbuf;
+        if (reset_symbuf)
+        {
+            symbol **p = (symbol **)reset_symbuf->buf;
+            const size_t n = reset_symbuf->size() / sizeof(symbol *);
+            for (size_t i = 0; i < n; ++i)
+                symbol_reset(p[i]);
+            reset_symbuf->setsize(0);
+        }
+        else
+        {
+            reset_symbuf = new Outbuffer(50 * sizeof(symbol *));
+        }
+
         memset(&obj,0,sizeof(obj));
 
         obj.buf = objbuf;
         obj.buf->reserve(40000);
+
+        obj.reset_symbuf = reset_symbuf; // reuse buffer
 
         obj.lastfardatasegi = -1;
 
@@ -833,6 +851,10 @@ void Obj::term(const char *objfilename)
 
 void Obj::linnum(Srcpos srcpos,targ_size_t offset)
 {
+#if MARS
+    varStats.recordLineOffset(srcpos, offset);
+#endif
+
     unsigned linnum = srcpos.Slinnum;
 
 #if 0
@@ -1209,7 +1231,7 @@ STATIC void obj_defaultlib()
         case EX_OS1:
             library[1] = 'O';
             break;
-        case EX_NT:
+        case EX_WIN32:
 #if MARS
             library[1] = 'M';
 #else
@@ -1383,7 +1405,7 @@ STATIC void objheader(char *csegname)
   comment[2] = config.target_cpu + '0';
   comment[3] = model[config.memmodel];
   if (I32)
-  {     if (config.exe == EX_NT)
+  {     if (config.exe == EX_WIN32)
             comment[3] = 'n';
         else if (config.exe == EX_OS2)
             comment[3] = 'f';
@@ -1594,7 +1616,6 @@ void Obj::segment_group(targ_size_t codesize,targ_size_t datasize,
 #endif
 }
 
-//#if NEWSTATICDTOR
 
 /**************************************
  * Symbol is the function that calls the static constructors.
@@ -1676,7 +1697,6 @@ void Obj::staticdtor(Symbol *s)
     assert(0);
 }
 
-//#else
 
 /***************************************
  * Stuff pointer to function in its own segment.
@@ -1737,7 +1757,6 @@ void Obj::funcptr(Symbol *s)
     obj.lnameidx += 3;                  // for next time
 }
 
-//#endif
 
 /***************************************
  * Stuff pointer to function in its own segment.
@@ -1872,6 +1891,7 @@ int Obj::comdat(Symbol *s)
     tym_t ty;
 
     symbol_debug(s);
+    obj.reset_symbuf->write(&s, sizeof(s));
     ty = s->ty();
     isfunc = tyfunc(ty) != 0;
 
@@ -1921,12 +1941,11 @@ int Obj::comdat(Symbol *s)
 #endif
                                 break;
 
-#if TARGET_SEGMENTED
             case mTYcs:         lr->flags |= 0x08;      // data in code seg
                                 atyp = 0x11;    break;
 
             case mTYfar:        atyp = 0x12;    break;
-#endif
+
             case mTYthread:     lr->pubbase = Obj::tlsseg()->segidx;
                                 atyp = 0x10;    // pick any (also means it is
                                                 // not searched for in a library)
@@ -2046,6 +2065,12 @@ seg_data *Obj::tlsseg()
     return SegData[obj.tlssegi];
 }
 
+seg_data *Obj::tlsseg_data()
+{
+    // specific for Mach-O
+    assert(0);
+    return NULL;
+}
 
 /********************************
  * Define a far data segment.
@@ -2236,8 +2261,7 @@ size_t Obj::mangle(Symbol *s,char *dest)
         size_t len2;
 
         // Attempt to compress the name
-        name2 = id_compress(name, len);
-        len2  = strlen(name2);
+        name2 = id_compress(name, len, &len2);
 #if MARS
         if (len2 > LIBIDMAX)            // still too long
         {
@@ -2294,14 +2318,12 @@ size_t Obj::mangle(Symbol *s,char *dest)
             break;
 #if SCPP || MARS
         case mTYman_cpp:
-#if NEWMANGLE
             memcpy(dest + 1,name,len);
             break;
 #endif
-#endif
         case mTYman_std:
             if (!(config.flags4 & CFG4oldstdmangle) &&
-                config.exe == EX_NT && tyfunc(s->ty()) &&
+                config.exe == EX_WIN32 && tyfunc(s->ty()) &&
                 !variadic(s->Stype))
             {
                 dest[1] = '_';
@@ -2326,9 +2348,7 @@ size_t Obj::mangle(Symbol *s,char *dest)
             dest[1 + len] = 0;
             break;
         default:
-#ifdef DEBUG
             symbol_print(s);
-#endif
             assert(0);
     }
     if (ilen > (255-2-sizeof(int)*3))
@@ -2413,6 +2433,10 @@ void Obj::func_start(Symbol *sfunc)
     symbol_debug(sfunc);
     sfunc->Sseg = cseg;             // current code seg
     sfunc->Soffset = Coffset;       // offset of start of function
+
+#if MARS
+    varStats.startFunction();
+#endif
 }
 
 /*******************************
@@ -2445,6 +2469,8 @@ void Obj::pubdef(int seg,Symbol *s,targ_size_t offset)
     unsigned ti;
 
     assert(offset < 100000000);
+    obj.reset_symbuf->write(&s, sizeof(s));
+
     int idx = SegData[seg]->segidx;
     if (obj.pubdatai + 1 + (IDMAX + IDOHD) + 4 + 2 > sizeof(obj.pubdata) ||
         idx != getindex(obj.pubdata + 1))
@@ -2490,7 +2516,7 @@ int Obj::external_def(const char *name)
 {   unsigned len;
     char *e;
 
-    //dbg_printf("Obj::external_def('%s')\n",name);
+    //printf("Obj::external_def('%s', %d)\n",name,obj.extidx + 1);
     assert(name);
     len = strlen(name);                 // length of identifier
     if (obj.extdatai + len + ONS_OHD + 1 > sizeof(obj.extdata))
@@ -2514,8 +2540,9 @@ int Obj::external_def(const char *name)
 
 int Obj::external(Symbol *s)
 {
-    //dbg_printf("Obj::external('%s')\n",s->Sident);
+    //printf("Obj::external('%s', %d)\n",s->Sident, obj.extidx + 1);
     symbol_debug(s);
+    obj.reset_symbuf->write(&s, sizeof(s));
     if (obj.extdatai + (IDMAX + IDOHD) + 3 > sizeof(obj.extdata))
         outextdata();
 
@@ -2580,7 +2607,8 @@ int Obj::common_block(Symbol *s,int flag,targ_size_t size,targ_size_t count)
   unsigned long length;
   unsigned ti;
 
-    //dbg_printf("Obj::common_block('%s',%d,%d,%d)\n",s->Sident,flag,size,count);
+    //printf("Obj::common_block('%s',%d,%d,%d, %d)\n",s->Sident,flag,size,count, obj.extidx + 1);
+    obj.reset_symbuf->write(&s, sizeof(s));
     outextdata();               // borrow the extdata[] storage
     i = Obj::mangle(s,obj.extdata);
 
@@ -2716,6 +2744,7 @@ STATIC void obj_modend()
         // Turn startaddress into a fixup.
         // Borrow heavilly from Obj::reftoident()
 
+        obj.reset_symbuf->write(&s, sizeof(s));
         symbol_debug(s);
         offset = 0;
         ty = s->ty();
@@ -2752,9 +2781,7 @@ STATIC void obj_modend()
                 offset += s->Soffset;
                 break;
             default:
-    #ifdef DEBUG
                 //symbol_print(s);
-    #endif
                 assert(0);
         }
 
@@ -2764,17 +2791,11 @@ STATIC void obj_modend()
             switch (s->Sfl)
             {
                 case FLextern:
-                    if (!(ty & (
-#if TARGET_SEGMENTED
-                                    mTYcs |
-#endif
-                                    mTYthread)))
+                    if (!(ty & (mTYcs | mTYthread)))
                         goto L1;
                 case FLfunc:
-#if TARGET_SEGMENTED
                 case FLfardata:
                 case FLcsdata:
-#endif
                 case FLtlsdata:
                     if (config.exe & EX_flat)
                     {   fd |= FD_F1;
@@ -2799,17 +2820,11 @@ STATIC void obj_modend()
             switch (s->Sfl)
             {
                 case FLextern:
-                    if (!(ty & (
-#if TARGET_SEGMENTED
-                                    mTYcs |
-#endif
-                                    mTYthread)))
+                    if (!(ty & (mTYcs | mTYthread)))
                         goto L1;
                 case FLfunc:
-#if TARGET_SEGMENTED
                 case FLfardata:
                 case FLcsdata:
-#endif
                 case FLtlsdata:
                     if (config.exe & EX_flat)
                     {   fd |= FD_F1;
@@ -3113,11 +3128,7 @@ void Obj::ledata(int seg,targ_size_t offset,targ_size_t data,
 {   unsigned i;
     unsigned size;                      // number of bytes to output
 
-#if TARGET_SEGMENTED
     unsigned ptrsize = tysize[TYfptr];
-#else
-    unsigned ptrsize = I64 ? 10 : 6;
-#endif
 
     if ((lcfd & LOCxx) == obj.LOCpointer)
         size = ptrsize;
@@ -3187,11 +3198,7 @@ L1:     ;
 void Obj::write_long(int seg,targ_size_t offset,unsigned long data,
         unsigned lcfd,unsigned idx1,unsigned idx2)
 {
-#if TARGET_SEGMENTED
     unsigned sz = tysize[TYfptr];
-#else
-    unsigned sz = I64 ? 10 : 6;
-#endif
     Ledatarec *lr = SegData[seg]->ledata;
     if (!lr)
          lr = ledata_new(seg, offset);
@@ -3393,11 +3400,7 @@ int Obj::reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
                 break;
             case CFoff | CFseg:
                 lc = obj.LOCpointer;
-#if TARGET_SEGMENTED
                 numbytes = tysize[TYfptr];
-#else
-                numbytes = I64 ? 10 : 6;
-#endif
                 break;
         }
         break;
@@ -3413,7 +3416,10 @@ int Obj::reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
             {   external = s->Sxtrnnum;
 #ifdef DEBUG
                 if (external > obj.extidx)
+                {
+                    printf("obj.extidx = %d\n", obj.extidx);
                     symbol_print(s);
+                }
 #endif
                 assert(external <= obj.extidx);
             }
@@ -3442,9 +3448,7 @@ int Obj::reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
                 val += s->Soffset;
             break;
         default:
-#ifdef DEBUG
             symbol_print(s);
-#endif
             assert(0);
     }
 
@@ -3455,17 +3459,11 @@ int Obj::reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
         switch (s->Sfl)
         {
             case FLextern:
-                if (!(ty & (
-#if TARGET_SEGMENTED
-                                mTYcs |
-#endif
-                                mTYthread)))
+                if (!(ty & (mTYcs | mTYthread)))
                     goto L1;
             case FLfunc:
-#if TARGET_SEGMENTED
             case FLfardata:
             case FLcsdata:
-#endif
             case FLtlsdata:
                 if (config.exe & EX_flat)
                 {   lc |= FD_F1;
@@ -3490,17 +3488,11 @@ int Obj::reftoident(int seg,targ_size_t offset,Symbol *s,targ_size_t val,
         switch (s->Sfl)
         {
             case FLextern:
-                if (!(ty & (
-#if TARGET_SEGMENTED
-                                mTYcs |
-#endif
-                                mTYthread)))
+                if (!(ty & (mTYcs | mTYthread)))
                     goto L1;
             case FLfunc:
-#if TARGET_SEGMENTED
             case FLfardata:
             case FLcsdata:
-#endif
             case FLtlsdata:
                 if (config.exe & EX_flat)
                 {   lc |= FD_F1;
@@ -3699,105 +3691,11 @@ void Obj::fltused()
     }
 }
 
-
-/****************************************
- * Find longest match of pattern[] in dict[].
- */
-
-static int longest_match(char *dict, int dlen, char *pattern, int plen,
-        int *pmatchoff, int *pmatchlen)
+symbol *Obj::tlv_bootstrap()
 {
-    int matchlen = 0;
-    int matchoff;
-
-    int i;
-    int j;
-
-    for (i = 0; i < dlen; i++)
-    {
-        if (dict[i] == pattern[0])
-        {
-            for (j = 1; 1; j++)
-            {
-                if (i + j == dlen || j == plen)
-                    break;
-                if (dict[i + j] != pattern[j])
-                    break;
-            }
-            if (j >= matchlen)
-            {
-                matchlen = j;
-                matchoff = i;
-            }
-        }
-    }
-
-    if (matchlen > 1)
-    {
-        *pmatchlen = matchlen;
-        *pmatchoff = matchoff;
-        return 1;                       // found a match
-    }
-    return 0;                           // no match
-}
-
-/******************************************
- * Compress an identifier.
- * Format: if ASCII, then it's just the char
- *      if high bit set, then it's a length/offset pair
- * Returns:
- *      malloc'd compressed identifier
- */
-
-char *id_compress(char *id, int idlen)
-{
-    int i;
-    int count = 0;
-    char *p;
-
-    p = (char *)malloc(idlen + 1);
-    for (i = 0; i < idlen; i++)
-    {
-        int matchoff;
-        int matchlen;
-
-        int j = 0;
-        if (i > 1023)
-            j = i - 1023;
-
-        if (longest_match(id + j, i - j, id + i, idlen - i, &matchoff, &matchlen))
-        {   int off;
-
-            matchoff += j;
-            off = i - matchoff;
-            //printf("matchoff = %3d, matchlen = %2d, off = %d\n", matchoff, matchlen, off);
-            assert(off >= matchlen);
-
-            if (off <= 8 && matchlen <= 8)
-            {
-                p[count] = 0xC0 | ((off - 1) << 3) | (matchlen - 1);
-                count++;
-                i += matchlen - 1;
-                continue;
-            }
-            else if (matchlen > 2 && off < 1024)
-            {
-                if (matchlen >= 1024)
-                    matchlen = 1023;    // longest representable match
-                p[count + 0] = 0x80 | ((matchlen >> 4) & 0x38) | ((off >> 7) & 7);
-                p[count + 1] = 0x80 | matchlen;
-                p[count + 2] = 0x80 | off;
-                count += 3;
-                i += matchlen - 1;
-                continue;
-            }
-        }
-        p[count] = id[i];
-        count++;
-    }
-    p[count] = 0;
-    //printf("old size = %d, new size = %d\n", idlen, count);
-    return p;
+    // specific for Mach-O
+    assert(0);
+    return NULL;
 }
 
 #endif

@@ -1,12 +1,12 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2015 by Digital Mars
+ * Copyright (c) 1999-2016 by Digital Mars
  * All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/D-Programming-Language/dmd/blob/master/src/glue.c
+ * https://github.com/dlang/dmd/blob/master/src/glue.c
  */
 
 #include <stdio.h>
@@ -41,9 +41,11 @@
 #include "irstate.h"
 
 void clearStringTab();
+RET retStyle(TypeFunction *tf);
 
 elem *addressElem(elem *e, Type *t, bool alwaysCopy = false);
 void Statement_toIR(Statement *s, IRState *irs);
+void insertFinallyBlockCalls(block *startblock);
 elem *toEfilename(Module *m);
 Symbol *toSymbol(Dsymbol *s);
 void buildClosure(FuncDeclaration *fd, IRState *irs);
@@ -56,6 +58,7 @@ type *Type_toCtype(Type *t);
 void toObjFile(Dsymbol *ds, bool multiobj);
 void genModuleInfo(Module *m);
 void genObjFile(Module *m, bool multiobj);
+void objc_Module_genmoduleinfo_classes();
 Symbol *toModuleAssert(Module *m);
 Symbol *toModuleUnittest(Module *m);
 Symbol *toModuleArray(Module *m);
@@ -99,7 +102,7 @@ void obj_write_deferred(Library *library)
         char *mname;
         if (m)
         {
-            mname = m->srcfile->toChars();
+            mname = (char*)m->srcfile->toChars();
             lastmname = mname;
         }
         else
@@ -132,7 +135,7 @@ void obj_write_deferred(Library *library)
         else
         {
             idbuf.data = NULL;
-            Identifier *id = Identifier::create(idstr, TOKidentifier);
+            Identifier *id = Identifier::create(idstr);
 
             Module *md = Module::create(mname, id, 0, 0);
             md->members = Dsymbols_create();
@@ -235,7 +238,6 @@ void obj_start(char *srcfile)
     //printf("obj_start()\n");
 
     rtlsym_reset();
-    slist_reset();
     clearStringTab();
 
 #if TARGET_WINDOS
@@ -319,7 +321,7 @@ void genObjFile(Module *m, bool multiobj)
         return;
     }
 
-    lastmname = m->srcfile->toChars();
+    lastmname = (char*)m->srcfile->toChars();
 
     objmod->initfile(lastmname, NULL, m->toPrettyChars());
 
@@ -353,7 +355,9 @@ void genObjFile(Module *m, bool multiobj)
 #else
                 Symbol *sref = symbol_generate(SCstatic, type_fake(TYnptr));
                 sref->Sfl = FLdata;
-                dtxoff(&sref->Sdt, s, 0, TYnptr);
+                DtBuilder dtb;
+                dtb.xoff(s, 0, TYnptr);
+                sref->Sdt = dtb.finish();
                 outdata(sref);
 #endif
             }
@@ -371,9 +375,12 @@ void genObjFile(Module *m, bool multiobj)
         m->cov->Stype->Tcount++;
         m->cov->Sclass = SCstatic;
         m->cov->Sfl = FLdata;
-        dtnzeros(&m->cov->Sdt, 4 * m->numlines);
+
+        DtBuilder dtb;
+        dtb.nzeros(4 * m->numlines);
+        m->cov->Sdt = dtb.finish();
+
         outdata(m->cov);
-        slist_add(m->cov);
 
         m->covb = (unsigned *)calloc((m->numlines + 32) / 32, sizeof(*m->covb));
     }
@@ -388,14 +395,18 @@ void genObjFile(Module *m, bool multiobj)
     if (global.params.cov)
     {
         /* Generate
-         *      bit[numlines] __bcoverage;
+         *  private bit[numlines] __bcoverage;
          */
         Symbol *bcov = symbol_calloc("__bcoverage");
         bcov->Stype = type_fake(TYuint);
         bcov->Stype->Tcount++;
         bcov->Sclass = SCstatic;
         bcov->Sfl = FLdata;
-        dtnbytes(&bcov->Sdt, (m->numlines + 32) / 32 * sizeof(*m->covb), (char *)m->covb);
+
+        DtBuilder dtb;
+        dtb.nbytes((m->numlines + 32) / 32 * sizeof(*m->covb), (char *)m->covb);
+        bcov->Sdt = dtb.finish();
+
         outdata(bcov);
 
         free(m->covb);
@@ -469,6 +480,7 @@ void genObjFile(Module *m, bool multiobj)
 
     if (m->doppelganger)
     {
+        objc_Module_genmoduleinfo_classes();
         objmod->termfile();
         return;
     }
@@ -735,6 +747,20 @@ bool isDruntimeArrayOp(Identifier *ident)
 
 /* ================================================================== */
 
+UnitTestDeclaration *needsDeferredNested(FuncDeclaration *fd)
+{
+    while (fd && fd->isNested())
+    {
+        FuncDeclaration *fdp = fd->toParent2()->isFuncDeclaration();
+        if (!fdp)
+            break;
+        if (UnitTestDeclaration *udp = fdp->isUnitTestDeclaration())
+            return udp->semanticRun < PASSobj ? udp : NULL;
+        fd = fdp;
+    }
+    return NULL;
+}
+
 void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
 {
     ClassDeclaration *cd = fd->parent->isClassDeclaration();
@@ -762,6 +788,9 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
 
     // If errors occurred compiling it, such as bugzilla 6118
     if (fd->type && fd->type->ty == Tfunction && ((TypeFunction *)fd->type)->next->ty == Terror)
+        return;
+
+    if (fd->semantic3Errors)
         return;
 
     if (global.errors)
@@ -802,23 +831,15 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
             break;
     }
 
-    FuncDeclaration *fdp = fd->toParent2()->isFuncDeclaration();
-    if (fd->isNested())
+    if (UnitTestDeclaration *udp = needsDeferredNested(fd))
     {
-        if (fdp && fdp->semanticRun < PASSobj)
-        {
-            if (fdp->semantic3Errors)
-                return;
-
-            /* Can't do unittest's out of order, they are order dependent in that their
-             * execution is done in lexical order.
-             */
-            if (UnitTestDeclaration *udp = fdp->isUnitTestDeclaration())
-            {
-                udp->deferredNested.push(fd);
-                return;
-            }
-        }
+        /* Can't do unittest's out of order, they are order dependent in that their
+         * execution is done in lexical order.
+         */
+        udp->deferredNested.push(fd);
+        //printf("%s @[%s]\n\t--> pushed to unittest @[%s]\n",
+        //    fd->toPrettyChars(), fd->loc.toChars(), udp->loc.toChars());
+        return;
     }
 
     if (fd->isArrayOp && isDruntimeArrayOp(fd->ident))
@@ -845,7 +866,6 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
         f->Fclass = (Classsym *)t;
     }
 
-#if TARGET_WINDOS
     /* This is done so that the 'this' pointer on the stack is the same
      * distance away from the function parameters, so that an overriding
      * function can call the nested fdensure or fdrequire of its overridden function
@@ -853,7 +873,6 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
      */
     if (fd->isVirtual() && (fd->fensure || fd->frequire))
         f->Fflags3 |= Ffakeeh;
-#endif
 
 #if TARGET_OSX
     s->Sclass = SCcomdat;
@@ -874,6 +893,23 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
     if (fd->isArrayOp)
         s->Sclass = SCcomdat;
 
+    if (fd->inlinedNestedCallees)
+    {
+        /* Bugzilla 15333: If fd contains inlined expressions that come from
+         * nested function bodies, the enclosing of the functions must be
+         * generated first, in order to calculate correct frame pointer offset.
+         */
+        for (size_t i = 0; i < fd->inlinedNestedCallees->dim; i++)
+        {
+            FuncDeclaration *f = (*fd->inlinedNestedCallees)[i];
+            FuncDeclaration *fp = f->toParent2()->isFuncDeclaration();;
+            if (fp && fp->semanticRun < PASSobj)
+            {
+                toObjFile(fp, multiobj);
+            }
+        }
+    }
+
     if (fd->isNested())
     {
         //if (!(config.flags3 & CFG3pic))
@@ -883,6 +919,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
         /* The enclosing function must have its code generated first,
          * in order to calculate correct frame pointer offset.
          */
+        FuncDeclaration *fdp = fd->toParent2()->isFuncDeclaration();
         if (fdp && fdp->semanticRun < PASSobj)
         {
             toObjFile(fdp, multiobj);
@@ -901,35 +938,31 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
             objmod->external_def("_main");
             objmod->ehsections();   // initialize exception handling sections
 #endif
-#if TARGET_WINDOS
             if (global.params.mscoff)
             {
                 objmod->external_def("main");
                 objmod->ehsections();   // initialize exception handling sections
             }
-            else
+            else if (config.exe == EX_WIN32)
             {
                 objmod->external_def("_main");
                 objmod->external_def("__acrtused_con");
             }
-#endif
             objmod->includelib(libname);
             s->Sclass = SCglobal;
         }
         else if (strcmp(s->Sident, "main") == 0 && fd->linkage == LINKc)
         {
-#if TARGET_WINDOS
             if (global.params.mscoff)
             {
                 objmod->includelib("LIBCMT");
                 objmod->includelib("OLDNAMES");
             }
-            else
+            else if (config.exe == EX_WIN32)
             {
                 objmod->external_def("__acrtused_con");        // bring in C startup code
                 objmod->includelib("snn.lib");          // bring in C runtime library
             }
-#endif
             s->Sclass = SCglobal;
         }
 #if TARGET_WINDOS
@@ -985,7 +1018,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
     IRState irs(m, fd);
     Dsymbols deferToObj;                   // write these to OBJ file later
     irs.deferToObj = &deferToObj;
-    AA *labels = NULL;
+    void *labels = NULL;
     irs.labels = &labels;
 
     symbol *shidden = NULL;
@@ -1158,6 +1191,26 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
         bx.module = fd->getModule();
         irs.blx = &bx;
 
+        // Initialize argptr
+        if (fd->v_argptr)
+        {
+            // Declare va_argsave
+            if (global.params.is64bit &&
+                !global.params.isWindows)
+            {
+                type *t = type_struct_class("__va_argsave_t", 16, 8 * 6 + 8 * 16 + 8 * 3, NULL, NULL, false, false, true);
+                // The backend will pick this up by name
+                Symbol *s = symbol_name("__va_argsave", SCauto, t);
+                s->Stype->Tty |= mTYvolatile;
+                symbol_add(s);
+            }
+
+            Symbol *s = toSymbol(fd->v_argptr);
+            symbol_add(s);
+            elem *e = el_una(OPva_start, TYnptr, el_ptr(s));
+            block_appendexp(irs.blx->curblock, e);
+        }
+
         /* Doing this in semantic3() caused all kinds of problems:
          * 1. couldn't reliably get the final mangling of the function name due to fwd refs
          * 2. impact on function inlining
@@ -1200,10 +1253,18 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
             sbody = CompoundStatement::create(Loc(), sp, stf);
         }
 
+        if (fd->interfaceVirtual)
+        {
+            // Adjust the 'this' pointer instead of using a thunk
+            assert(irs.sthis);
+            elem *ethis = el_var(irs.sthis);
+            elem *e = el_bin(OPminass, TYnptr, ethis, el_long(TYsize_t, fd->interfaceVirtual->offset));
+            block_appendexp(irs.blx->curblock, e);
+        }
+
         buildClosure(fd, &irs);
 
-#if TARGET_WINDOS
-        if (fd->isSynchronized() && cd && config.flags2 & CFG2seh &&
+        if (config.ehmethod == EH_WIN32 && fd->isSynchronized() && cd &&
             !fd->isStatic() && !sbody->usesEH() && !global.params.trace)
         {
             /* The "jmonitor" hack uses an optimized exception handling frame
@@ -1211,7 +1272,6 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
              */
             s->Sfunc->Fflags3 |= Fjmonitor;
         }
-#endif
 
         Statement_toIR(sbody, &irs);
         bx.curblock->BC = BCret;
@@ -1231,6 +1291,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration *fd, bool multiobj)
                 }
             }
         }
+        insertFinallyBlockCalls(f->Fstartblock);
     }
 
     // If static constructor
@@ -1324,14 +1385,13 @@ bool onlyOneMain(Loc loc)
     static bool hasMain = false;
     if (hasMain)
     {
-        const char *msg = NULL;
+        const char *msg = "";
         if (global.params.addMain)
             msg = ", -main switch added another main()";
-#if TARGET_WINDOS
-        error(lastLoc, "only one main/WinMain/DllMain allowed%s", msg ? msg : "");
-#else
-        error(lastLoc, "only one main allowed%s", msg ? msg : "");
-#endif
+        const char *othermain = "";
+        if (config.exe == EX_WIN32 || config.exe == EX_WIN64)
+            othermain = "/WinMain/DllMain";
+        error(lastLoc, "only one main%s allowed%s", othermain, msg);
         return false;
     }
     lastLoc = loc;

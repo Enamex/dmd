@@ -1,16 +1,19 @@
-// Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
-// All Rights Reserved
-// written by Walter Bright
-// http://www.digitalmars.com
-// Distributed under the Boost Software License, Version 1.0.
-// http://www.boost.org/LICENSE_1_0.txt
+/**
+ * Compiler implementation of the
+ * $(LINK2 http://www.dlang.org, D programming language).
+ *
+ * Copyright:   Copyright (c) 1999-2016 by Digital Mars, All Rights Reserved
+ * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
+ * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+ * Source:      $(DMDSRC _dimport.d)
+ */
 
 module ddmd.dimport;
 
 import core.stdc.string;
+import core.stdc.stdio;
+
 import ddmd.arraytypes;
-import ddmd.attrib;
 import ddmd.declaration;
 import ddmd.dmodule;
 import ddmd.dscope;
@@ -21,29 +24,33 @@ import ddmd.globals;
 import ddmd.hdrgen;
 import ddmd.id;
 import ddmd.identifier;
-import ddmd.mars;
 import ddmd.mtype;
 import ddmd.root.outbuffer;
+import ddmd.utils;
 import ddmd.visitor;
 
+/***********************************************************
+ */
 extern (C++) final class Import : Dsymbol
 {
-public:
     /* static import aliasId = pkg1.pkg2.id : alias1 = name1, alias2 = name2;
      */
-    Identifiers* packages; // array of Identifier's representing packages
-    Identifier id; // module Identifier
+    Identifiers* packages;  // array of Identifier's representing packages
+    Identifier id;          // module Identifier
     Identifier aliasId;
-    int isstatic; // !=0 if static import
-    PROTKIND protection;
+    int isstatic;           // !=0 if static import
+    Prot protection;
+
     // Pairs of alias=name to bind into current namespace
     Identifiers names;
     Identifiers aliases;
-    Module mod;
-    Package pkg; // leftmost package/module
-    AliasDeclarations aliasdecls; // corresponding AliasDeclarations for alias=name pairs
 
-    /********************************* Import ****************************/
+    Module mod;
+    Package pkg;            // leftmost package/module
+
+    // corresponding AliasDeclarations for alias=name pairs
+    AliasDeclarations aliasdecls;
+
     extern (D) this(Loc loc, Identifiers* packages, Identifier id, Identifier aliasId, int isstatic)
     {
         super(null);
@@ -67,8 +74,6 @@ public:
         this.aliasId = aliasId;
         this.isstatic = isstatic;
         this.protection = PROTprivate; // default to private
-        this.pkg = null;
-        this.mod = null;
         // Set symbol name (bracketed)
         if (aliasId)
         {
@@ -97,18 +102,18 @@ public:
         aliases.push(_alias);
     }
 
-    const(char)* kind()
+    override const(char)* kind() const
     {
         return isstatic ? cast(char*)"static import" : cast(char*)"import";
     }
 
-    Prot prot()
+    override Prot prot()
     {
-        return Prot(protection);
+        return protection;
     }
 
     // copy only syntax trees
-    Dsymbol syntaxCopy(Dsymbol s)
+    override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
         auto si = new Import(loc, packages, id, aliasId, isstatic);
@@ -155,6 +160,8 @@ public:
                         {
                             // mod is a package.d, or a normal module which conflicts with the package name.
                             assert(mod.isPackageFile == (p.isPkgMod == PKGmodule));
+                            if (mod.isPackageFile)
+                                mod.tag = p.tag; // reuse the same package tag
                         }
                     }
                     else
@@ -182,8 +189,8 @@ public:
             mod = Module.load(loc, packages, id);
             if (mod)
             {
-                dst.insert(id, mod); // id may be different from mod->ident,
-                // if so then insert alias
+                // id may be different from mod.ident, if so then insert alias
+                dst.insert(id, mod);
             }
         }
         if (mod && !mod.importedFrom)
@@ -193,7 +200,7 @@ public:
         //printf("-Import::load('%s'), pkg = %p\n", toChars(), pkg);
     }
 
-    void importAll(Scope* sc)
+    override void importAll(Scope* sc)
     {
         if (!mod)
         {
@@ -209,19 +216,19 @@ public:
                         mod.deprecation(loc, "is deprecated");
                 }
                 mod.importAll(null);
+                if (sc.explicitProtection)
+                    protection = sc.protection;
                 if (!isstatic && !aliasId && !names.dim)
                 {
-                    if (sc.explicitProtection)
-                        protection = sc.protection.kind;
-                    sc.scopesym.importScope(mod, Prot(protection));
+                    sc.scopesym.importScope(mod, protection);
                 }
             }
         }
     }
 
-    void semantic(Scope* sc)
+    override void semantic(Scope* sc)
     {
-        //printf("Import::semantic('%s')\n", toPrettyChars());
+        //printf("Import::semantic('%s') %s\n", toPrettyChars(), id.toChars());
         if (_scope)
         {
             sc = _scope;
@@ -237,46 +244,64 @@ public:
         if (mod)
         {
             // Modules need a list of each imported module
-            //printf("%s imports %s\n", sc->module->toChars(), mod->toChars());
+            //printf("%s imports %s\n", sc.module.toChars(), mod.toChars());
             sc._module.aimports.push(mod);
-            if (!isstatic && !aliasId && !names.dim)
+
+            if (sc.explicitProtection)
+                protection = sc.protection;
+
+            if (!aliasId && !names.dim) // neither a selective nor a renamed import
             {
-                if (sc.explicitProtection)
-                    protection = sc.protection.kind;
+                ScopeDsymbol scopesym;
                 for (Scope* scd = sc; scd; scd = scd.enclosing)
                 {
-                    if (scd.scopesym)
+                    if (!scd.scopesym)
+                        continue;
+                    scopesym = scd.scopesym;
+                    break;
+                }
+
+                if (!isstatic)
+                {
+                    scopesym.importScope(mod, protection);
+                }
+
+                // Mark the imported packages as accessible from the current
+                // scope. This access check is necessary when using FQN b/c
+                // we're using a single global package tree. See Bugzilla 313.
+                if (packages)
+                {
+                    // import a.b.c.d;
+                    auto p = pkg; // a
+                    scopesym.addAccessiblePackage(p);
+                    foreach (id; (*packages)[1 .. packages.dim]) // [b, c]
                     {
-                        scd.scopesym.importScope(mod, Prot(protection));
-                        break;
+                        p = cast(Package) p.symtab.lookup(id);
+                        scopesym.addAccessiblePackage(p);
                     }
                 }
+                scopesym.addAccessiblePackage(mod); // d
             }
+
             mod.semantic();
             if (mod.needmoduleinfo)
             {
-                //printf("module4 %s because of %s\n", sc->module->toChars(), mod->toChars());
+                //printf("module4 %s because of %s\n", sc.module.toChars(), mod.toChars());
                 sc._module.needmoduleinfo = 1;
             }
+
             sc = sc.push(mod);
-            /* BUG: Protection checks can't be enabled yet. The issue is
-             * that Dsymbol::search errors before overload resolution.
-             */
-            version (none)
-            {
-                sc.protection = protection;
-            }
-            else
-            {
-                sc.protection = Prot(PROTpublic);
-            }
+            sc.protection = protection;
             for (size_t i = 0; i < aliasdecls.dim; i++)
             {
                 AliasDeclaration ad = aliasdecls[i];
-                //printf("\tImport alias semantic('%s')\n", ad->toChars());
+                //printf("\tImport %s alias %s = %s, scope = %p\n", toPrettyChars(), aliases[i].toChars(), names[i].toChars(), ad._scope);
                 if (mod.search(loc, names[i]))
                 {
                     ad.semantic(sc);
+                    // If the import declaration is in non-root module,
+                    // analysis of the aliased symbol is deferred.
+                    // Therefore, don't see the ad.aliassym or ad.type here.
                 }
                 else
                 {
@@ -290,9 +315,12 @@ public:
             }
             sc = sc.pop();
         }
+
         // object self-imports itself, so skip that (Bugzilla 7547)
         // don't list pseudo modules __entrypoint.d, __main.d (Bugzilla 11117, 11164)
-        if (global.params.moduleDeps !is null && !(id == Id.object && sc._module.ident == Id.object) && sc._module.ident != Id.entrypoint && strcmp(sc._module.ident.string, "__main") != 0)
+        if (global.params.moduleDeps !is null && !(id == Id.object && sc._module.ident == Id.object) &&
+            sc._module.ident != Id.entrypoint &&
+            strcmp(sc._module.ident.toChars(), "__main") != 0)
         {
             /* The grammar of the file is:
              *      ImportDeclaration
@@ -314,9 +342,9 @@ public:
             ob.writestring(" (");
             escapePath(ob, imod.srcfile.toChars());
             ob.writestring(") : ");
-            // use protection instead of sc->protection because it couldn't be
+            // use protection instead of sc.protection because it couldn't be
             // resolved yet, see the comment above
-            protectionToBuffer(ob, Prot(protection));
+            protectionToBuffer(ob, protection);
             ob.writeByte(' ');
             if (isstatic)
             {
@@ -362,7 +390,7 @@ public:
         //printf("-Import::semantic('%s'), pkg = %p\n", toChars(), pkg);
     }
 
-    void semantic2(Scope* sc)
+    override void semantic2(Scope* sc)
     {
         //printf("Import::semantic2('%s')\n", toChars());
         if (mod)
@@ -370,13 +398,14 @@ public:
             mod.semantic2();
             if (mod.needmoduleinfo)
             {
-                //printf("module5 %s because of %s\n", sc->module->toChars(), mod->toChars());
-                sc._module.needmoduleinfo = 1;
+                //printf("module5 %s because of %s\n", sc.module.toChars(), mod.toChars());
+                if (sc)
+                    sc._module.needmoduleinfo = 1;
             }
         }
     }
 
-    Dsymbol toAlias()
+    override Dsymbol toAlias()
     {
         if (aliasId)
             return mod;
@@ -386,8 +415,9 @@ public:
     /*****************************
      * Add import to sd's symbol table.
      */
-    void addMember(Scope* sc, ScopeDsymbol sd)
+    override void addMember(Scope* sc, ScopeDsymbol sd)
     {
+        //printf("Import.addMember(this=%s, sd=%s, sc=%p)\n", toChars(), sd.toChars(), sc);
         if (names.dim == 0)
             return Dsymbol.addMember(sc, sd);
         if (aliasId)
@@ -409,9 +439,25 @@ public:
         }
     }
 
-    Dsymbol search(Loc loc, Identifier ident, int flags = IgnoreNone)
+    override void setScope(Scope* sc)
     {
-        //printf("%s.Import::search(ident = '%s', flags = x%x)\n", toChars(), ident->toChars(), flags);
+        Dsymbol.setScope(sc);
+        if (aliasdecls.dim)
+        {
+            if (!mod)
+                importAll(sc);
+
+            sc = sc.push(mod);
+            sc.protection = protection;
+            foreach (ad; aliasdecls)
+                ad.setScope(sc);
+            sc = sc.pop();
+        }
+    }
+
+    override Dsymbol search(Loc loc, Identifier ident, int flags = SearchLocalsOnly)
+    {
+        //printf("%s.Import.search(ident = '%s', flags = x%x)\n", toChars(), ident.toChars(), flags);
         if (!pkg)
         {
             load(null);
@@ -422,7 +468,7 @@ public:
         return pkg.search(loc, ident, flags);
     }
 
-    bool overloadInsert(Dsymbol s)
+    override bool overloadInsert(Dsymbol s)
     {
         /* Allow multiple imports with the same package base, but disallow
          * alias collisions (Bugzilla 5412).
@@ -435,12 +481,12 @@ public:
             return false;
     }
 
-    Import isImport()
+    override inout(Import) isImport() inout
     {
         return this;
     }
 
-    void accept(Visitor v)
+    override void accept(Visitor v)
     {
         v.visit(this);
     }

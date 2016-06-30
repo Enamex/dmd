@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -8,6 +8,7 @@
 
 module ddmd.identifier;
 
+import core.stdc.ctype;
 import core.stdc.stdio;
 import core.stdc.string;
 import ddmd.globals;
@@ -16,48 +17,69 @@ import ddmd.root.outbuffer;
 import ddmd.root.rootobject;
 import ddmd.root.stringtable;
 import ddmd.tokens;
+import ddmd.utf;
 
+/***********************************************************
+ */
 extern (C++) final class Identifier : RootObject
 {
-public:
-    int value;
-    const(char)* string;
-    size_t len;
+private:
+    const int value;
+    const char* string;
+    const size_t len;
 
-    extern (D) this(const(char)* string, int value)
+public:
+
+    extern (D) this(const(char)* string, size_t length, int value)
     {
         //printf("Identifier('%s', %d)\n", string, value);
         this.string = string;
         this.value = value;
-        this.len = strlen(string);
+        this.len = length;
     }
 
-    static Identifier create(const(char)* string, int value)
+    extern (D) this(const(char)* string)
     {
-        return new Identifier(string, value);
+        //printf("Identifier('%s', %d)\n", string, value);
+        this(string, strlen(string), TOKidentifier);
     }
 
-    bool equals(RootObject o)
+    static Identifier create(const(char)* string)
+    {
+        return new Identifier(string);
+    }
+
+    override bool equals(RootObject o) const
     {
         return this == o || strncmp(string, o.toChars(), len + 1) == 0;
     }
 
-    int compare(RootObject o)
+    override int compare(RootObject o) const
     {
         return strncmp(string, o.toChars(), len + 1);
     }
 
-    void print()
+    override void print() const
     {
         fprintf(stderr, "%s", string);
     }
 
-    char* toChars()
+    override const(char)* toChars() const
     {
-        return cast(char*)string;
+        return string;
     }
 
-    const(char)* toHChars2()
+    extern (D) final const(char)[] toString() const
+    {
+        return string[0 .. len];
+    }
+
+    final int getValue() const
+    {
+        return value;
+    }
+
+    const(char)* toHChars2() const
     {
         const(char)* p = null;
         if (this == Id.ctor)
@@ -90,7 +112,7 @@ public:
         return p;
     }
 
-    int dyncast()
+    override int dyncast() const
     {
         return DYNCAST_IDENTIFIER;
     }
@@ -108,16 +130,15 @@ public:
         OutBuffer buf;
         buf.writestring(prefix);
         buf.printf("%llu", cast(ulong)i);
-        char* id = buf.peekString();
-        return idPool(id);
+        return idPool(buf.peekSlice());
     }
 
     /********************************************
      * Create an identifier in the string table.
      */
-    static Identifier idPool(const(char)* s)
+    extern (D) static Identifier idPool(const(char)[] s)
     {
-        return idPool(s, strlen(s));
+        return idPool(s.ptr, s.length);
     }
 
     static Identifier idPool(const(char)* s, size_t len)
@@ -126,15 +147,53 @@ public:
         Identifier id = cast(Identifier)sv.ptrvalue;
         if (!id)
         {
-            id = new Identifier(sv.toDchars(), TOKidentifier);
+            id = new Identifier(sv.toDchars(), len, TOKidentifier);
             sv.ptrvalue = cast(char*)id;
         }
         return id;
     }
 
+    extern (D) static Identifier idPool(const(char)* s, size_t len, int value)
+    {
+        auto sv = stringtable.insert(s, len, null);
+        assert(sv);
+        auto id = new Identifier(sv.toDchars(), len, value);
+        sv.ptrvalue = cast(char*)id;
+        return id;
+    }
+
+    /**********************************
+     * Determine if string is a valid Identifier.
+     * Returns:
+     *      0       invalid
+     */
+    static bool isValidIdentifier(const(char)* p)
+    {
+        size_t len;
+        size_t idx;
+        if (!p || !*p)
+            goto Linvalid;
+        if (*p >= '0' && *p <= '9') // beware of isdigit() on signed chars
+            goto Linvalid;
+        len = strlen(p);
+        idx = 0;
+        while (p[idx])
+        {
+            dchar dc;
+            const q = utf_decodeChar(p, len, idx, dc);
+            if (q)
+                goto Linvalid;
+            if (!((dc >= 0x80 && isUniAlpha(dc)) || isalnum(dc) || dc == '_'))
+                goto Linvalid;
+        }
+        return true;
+    Linvalid:
+        return false;
+    }
+
     static Identifier lookup(const(char)* s, size_t len)
     {
-        StringValue* sv = stringtable.lookup(s, len);
+        auto sv = stringtable.lookup(s, len);
         if (!sv)
             return null;
         return cast(Identifier)sv.ptrvalue;

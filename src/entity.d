@@ -1,5 +1,5 @@
 // Compiler implementation of the D programming language
-// Copyright (c) 1999-2015 by Digital Mars
+// Copyright (c) 1999-2016 by Digital Mars
 // All Rights Reserved
 // written by Walter Bright
 // http://www.digitalmars.com
@@ -9,6 +9,8 @@
 module ddmd.entity;
 
 import core.stdc.ctype;
+
+private:
 
 /*********************************************
  * Convert from named entity to its encoding.
@@ -2371,7 +2373,7 @@ immutable NameId[][] namesTable =
     namesS, namesT, namesU, namesV, namesW, namesX, namesY, namesZ
 ];
 
-extern (C++) int HtmlNamedEntity(const(char)* p, size_t length)
+public int HtmlNamedEntity(const(char)* p, size_t length)
 {
     int tableIndex = tolower(*p) - 'a';
     if (tableIndex >= 0 && tableIndex < 26)

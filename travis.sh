@@ -2,6 +2,10 @@
 
 set -exo pipefail
 
+# add missing cc link in gdc-4.9.3 download
+if [ $DC = gdc ] && [ ! -f $(dirname $(which gdc))/cc ]; then
+    ln -s gcc $(dirname $(which gdc))/cc
+fi
 N=2
 
 git clone --depth=1 https://github.com/D-Programming-Language/druntime.git ../druntime
@@ -29,7 +33,7 @@ done
 make -j$N -C ../druntime -f posix.mak unittest
 make -j$N -C ../phobos -f posix.mak unittest
 # test fewer compiler argument permutations for PRs to reduce CI load
-if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then
+if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
     make -j$N -C test MODEL=64
 else
     make -j$N -C test MODEL=64 ARGS="-O -inline -release"
